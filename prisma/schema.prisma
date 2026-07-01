@@ -1,0 +1,300 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Moneda {
+  COP
+  BS
+  USD
+  USDT
+}
+
+enum CategoriaCuenta {
+  BASE_COP
+  OPERATIVA
+}
+
+enum TipoCuenta {
+  CAJA
+  OFICINA
+  BANCO
+  ZELLE
+  BINANCE
+  BILLETERA_BS
+  OTRA
+}
+
+enum EstadoEntidad {
+  ACTIVO
+  INACTIVO
+}
+
+enum TipoOperacion {
+  COMPRA
+  VENTA
+  OPERACION_DIRECTA
+}
+
+enum EstadoOperacion {
+  REGISTRADA
+  CANCELADA
+}
+
+enum TipoEntrada {
+  ABONO_CUENTA_PROPIA
+  ABONO_DIRECTO_PROVEEDOR
+}
+
+enum TipoMovimientoCuenta {
+  ENTRADA
+  SALIDA
+  GASTO
+  TRASLADO_ENTRADA
+  TRASLADO_SALIDA
+  OPERACION_ENTRADA
+  OPERACION_SALIDA
+  AJUSTE_ENTRADA
+  AJUSTE_SALIDA
+}
+
+enum TipoMovimientoCliente {
+  OPERACION
+  ABONO
+  ABONO_DIRECTO
+  AJUSTE
+  CANCELACION
+}
+
+enum TipoMovimientoProveedor {
+  OPERACION
+  PAGO
+  ABONO_DIRECTO
+  AJUSTE
+  CANCELACION
+}
+
+enum RolUsuario {
+  ADMIN
+  OPERADOR
+  VISOR
+}
+
+model Usuario {
+  id       String        @id @default(uuid())
+  nombre   String
+  correo   String        @unique
+  password String
+  rol      RolUsuario    @default(OPERADOR)
+  estado   EstadoEntidad @default(ACTIVO)
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("usuarios")
+}
+
+model Cliente {
+  id        String        @id @default(uuid())
+  nombre    String
+  documento String?
+  telefono  String?
+  notas     String?
+  estado    EstadoEntidad @default(ACTIVO)
+
+  operaciones Operacion[]
+  entradas    Entrada[]
+  movimientos MovimientoCliente[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("clientes")
+}
+
+model Proveedor {
+  id        String        @id @default(uuid())
+  nombre    String
+  documento String?
+  telefono  String?
+  notas     String?
+  estado    EstadoEntidad @default(ACTIVO)
+
+  operaciones Operacion[]
+  entradas    Entrada[]
+  movimientos MovimientoProveedor[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("proveedores")
+}
+
+model Cuenta {
+  id        String          @id @default(uuid())
+  nombre    String
+  moneda    Moneda
+  categoria CategoriaCuenta
+  tipo      TipoCuenta
+  saldo     Decimal         @default(0)
+  estado    EstadoEntidad   @default(ACTIVO)
+  notas     String?
+
+  movimientos MovimientoCuenta[]
+  entradas    Entrada[]
+  operaciones Operacion[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("cuentas")
+}
+
+model Operacion {
+  id     String @id @default(uuid())
+  codigo String @unique
+  nombre String
+
+  tipo   TipoOperacion
+  estado EstadoOperacion @default(REGISTRADA)
+
+  clienteId   String?
+  proveedorId String?
+
+  monedaTransaccion Moneda
+  montoTransaccion  Decimal
+
+  tasaCompra Decimal
+  tasaVenta  Decimal
+
+  totalCompraCop Decimal
+  totalVentaCop  Decimal
+  utilidadCop    Decimal
+
+  cuentaOperativaId String?
+
+  destinatario String?
+
+  fechaOperacion DateTime @default(now())
+  notas          String?
+
+  cliente         Cliente?   @relation(fields: [clienteId], references: [id])
+  proveedor       Proveedor? @relation(fields: [proveedorId], references: [id])
+  cuentaOperativa Cuenta?    @relation(fields: [cuentaOperativaId], references: [id])
+
+  movimientosCliente   MovimientoCliente[]
+  movimientosProveedor MovimientoProveedor[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("operaciones")
+}
+
+model Entrada {
+  id String @id @default(uuid())
+
+  tipo TipoEntrada
+
+  clienteId   String
+  proveedorId String?
+  cuentaId    String?
+
+  montoCop Decimal
+
+  descripcion String?
+  referencia  String?
+  notas       String?
+
+  cliente   Cliente    @relation(fields: [clienteId], references: [id])
+  proveedor Proveedor? @relation(fields: [proveedorId], references: [id])
+  cuenta    Cuenta?    @relation(fields: [cuentaId], references: [id])
+
+  movimientosCliente   MovimientoCliente[]
+  movimientosProveedor MovimientoProveedor[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("entradas")
+}
+
+model MovimientoCuenta {
+  id String @id @default(uuid())
+
+  cuentaId String
+  tipo     TipoMovimientoCuenta
+
+  monto  Decimal
+  moneda Moneda
+
+  saldoAnterior Decimal?
+  saldoNuevo    Decimal?
+
+  descripcion    String?
+  referenciaTipo String?
+  referenciaId   String?
+
+  cuenta Cuenta @relation(fields: [cuentaId], references: [id])
+
+  creadoEn DateTime @default(now())
+
+  @@map("movimientos_cuentas")
+}
+
+model MovimientoCliente {
+  id String @id @default(uuid())
+
+  clienteId String
+  tipo      TipoMovimientoCliente
+
+  operacionId String?
+  entradaId   String?
+
+  monedaTransaccion Moneda?
+  montoTransaccion  Decimal?
+
+  debitoCop  Decimal @default(0)
+  creditoCop Decimal @default(0)
+
+  descripcion String?
+
+  cliente   Cliente    @relation(fields: [clienteId], references: [id])
+  operacion Operacion? @relation(fields: [operacionId], references: [id])
+  entrada   Entrada?   @relation(fields: [entradaId], references: [id])
+
+  creadoEn DateTime @default(now())
+
+  @@map("movimientos_clientes")
+}
+
+model MovimientoProveedor {
+  id String @id @default(uuid())
+
+  proveedorId String
+  tipo        TipoMovimientoProveedor
+
+  operacionId String?
+  entradaId   String?
+
+  monedaTransaccion Moneda?
+  montoTransaccion  Decimal?
+
+  debitoCop  Decimal @default(0)
+  creditoCop Decimal @default(0)
+
+  descripcion String?
+
+  proveedor Proveedor  @relation(fields: [proveedorId], references: [id])
+  operacion Operacion? @relation(fields: [operacionId], references: [id])
+  entrada   Entrada?   @relation(fields: [entradaId], references: [id])
+
+  creadoEn DateTime @default(now())
+
+  @@map("movimientos_proveedores")
+}
