@@ -155,8 +155,52 @@ export class ClientesService {
         creadoEn: 'desc',
       },
       include: {
-        operacion: true,
-        entrada: true,
+        operacion: {
+          include: {
+            deudor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            cuentaOperativa: {
+              select: {
+                id: true,
+                nombre: true,
+                moneda: true,
+              },
+            },
+          },
+        },
+        entrada: {
+          include: {
+            deudor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            cuenta: {
+              select: {
+                id: true,
+                nombre: true,
+                moneda: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -199,18 +243,70 @@ export class ClientesService {
             creadoEn: 'desc',
           },
           take: 10,
+          include: {
+            operacion: true,
+            entrada: true,
+          },
         },
-        operaciones: {
+        operacionesComoDeudor: {
           orderBy: {
             creadoEn: 'desc',
           },
           take: 10,
+          include: {
+            cuentaOperativa: true,
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+          },
         },
-        entradas: {
+        operacionesComoAcreedor: {
           orderBy: {
             creadoEn: 'desc',
           },
           take: 10,
+          include: {
+            cuentaOperativa: true,
+            deudor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+          },
+        },
+        entradasComoDeudor: {
+          orderBy: {
+            creadoEn: 'desc',
+          },
+          take: 10,
+          include: {
+            cuenta: true,
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+          },
+        },
+        entradasComoAcreedor: {
+          orderBy: {
+            creadoEn: 'desc',
+          },
+          take: 10,
+          include: {
+            cuenta: true,
+            deudor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+          },
         },
       },
     });
@@ -249,8 +345,10 @@ export class ClientesService {
         estado: this.obtenerEstadoBalance(saldoCop),
       },
       ultimosMovimientos: cliente.movimientos,
-      ultimasOperaciones: cliente.operaciones,
-      ultimasEntradas: cliente.entradas,
+      ultimasOperacionesComoDeudor: cliente.operacionesComoDeudor,
+      ultimasOperacionesComoAcreedor: cliente.operacionesComoAcreedor,
+      ultimasEntradasComoDeudor: cliente.entradasComoDeudor,
+      ultimasEntradasComoAcreedor: cliente.entradasComoAcreedor,
     };
   }
 
@@ -271,11 +369,11 @@ export class ClientesService {
 
   private obtenerEstadoBalance(saldoCop: number) {
     if (saldoCop > 0) {
-      return 'DEBE';
+      return 'ME_DEBE';
     }
 
     if (saldoCop < 0) {
-      return 'SALDO_A_FAVOR';
+      return 'LE_DEBO';
     }
 
     return 'SALDADO';
