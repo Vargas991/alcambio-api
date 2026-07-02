@@ -1,6 +1,6 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
   moduleFormat = "cjs"
 }
 
@@ -66,13 +66,6 @@ enum TipoMovimientoCuenta {
 enum TipoMovimientoCliente {
   OPERACION
   ABONO
-  ABONO_DIRECTO
-  AJUSTE
-  CANCELACION
-}
-
-enum TipoMovimientoProveedor {
-  OPERACION
   PAGO
   ABONO_DIRECTO
   AJUSTE
@@ -107,32 +100,18 @@ model Cliente {
   notas     String?
   estado    EstadoEntidad @default(ACTIVO)
 
-  operaciones Operacion[]
-  entradas    Entrada[]
+  operacionesComoDeudor   Operacion[] @relation("OperacionDeudor")
+  operacionesComoAcreedor Operacion[] @relation("OperacionAcreedor")
+
+  entradasComoDeudor   Entrada[] @relation("EntradaDeudor")
+  entradasComoAcreedor Entrada[] @relation("EntradaAcreedor")
+
   movimientos MovimientoCliente[]
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
   @@map("clientes")
-}
-
-model Proveedor {
-  id        String        @id @default(uuid())
-  nombre    String
-  documento String?
-  telefono  String?
-  notas     String?
-  estado    EstadoEntidad @default(ACTIVO)
-
-  operaciones Operacion[]
-  entradas    Entrada[]
-  movimientos MovimientoProveedor[]
-
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
-
-  @@map("proveedores")
 }
 
 model Cuenta {
@@ -163,8 +142,8 @@ model Operacion {
   tipo   TipoOperacion
   estado EstadoOperacion @default(REGISTRADA)
 
-  clienteId   String?
-  proveedorId String?
+  deudorId   String?
+  acreedorId String?
 
   monedaTransaccion Moneda
   montoTransaccion  Decimal
@@ -183,12 +162,12 @@ model Operacion {
   fechaOperacion DateTime @default(now())
   notas          String?
 
-  cliente         Cliente?   @relation(fields: [clienteId], references: [id])
-  proveedor       Proveedor? @relation(fields: [proveedorId], references: [id])
-  cuentaOperativa Cuenta?    @relation(fields: [cuentaOperativaId], references: [id])
+  deudor   Cliente? @relation("OperacionDeudor", fields: [deudorId], references: [id])
+  acreedor Cliente? @relation("OperacionAcreedor", fields: [acreedorId], references: [id])
 
-  movimientosCliente   MovimientoCliente[]
-  movimientosProveedor MovimientoProveedor[]
+  cuentaOperativa Cuenta? @relation(fields: [cuentaOperativaId], references: [id])
+
+  movimientosCliente MovimientoCliente[]
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
@@ -201,9 +180,9 @@ model Entrada {
 
   tipo TipoEntrada
 
-  clienteId   String
-  proveedorId String?
-  cuentaId    String?
+  deudorId   String
+  acreedorId String?
+  cuentaId   String?
 
   montoCop Decimal
 
@@ -211,12 +190,11 @@ model Entrada {
   referencia  String?
   notas       String?
 
-  cliente   Cliente    @relation(fields: [clienteId], references: [id])
-  proveedor Proveedor? @relation(fields: [proveedorId], references: [id])
-  cuenta    Cuenta?    @relation(fields: [cuentaId], references: [id])
+  deudor   Cliente  @relation("EntradaDeudor", fields: [deudorId], references: [id])
+  acreedor Cliente? @relation("EntradaAcreedor", fields: [acreedorId], references: [id])
+  cuenta   Cuenta?  @relation(fields: [cuentaId], references: [id])
 
-  movimientosCliente   MovimientoCliente[]
-  movimientosProveedor MovimientoProveedor[]
+  movimientosCliente MovimientoCliente[]
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
@@ -271,30 +249,4 @@ model MovimientoCliente {
   creadoEn DateTime @default(now())
 
   @@map("movimientos_clientes")
-}
-
-model MovimientoProveedor {
-  id String @id @default(uuid())
-
-  proveedorId String
-  tipo        TipoMovimientoProveedor
-
-  operacionId String?
-  entradaId   String?
-
-  monedaTransaccion Moneda?
-  montoTransaccion  Decimal?
-
-  debitoCop  Decimal @default(0)
-  creditoCop Decimal @default(0)
-
-  descripcion String?
-
-  proveedor Proveedor  @relation(fields: [proveedorId], references: [id])
-  operacion Operacion? @relation(fields: [operacionId], references: [id])
-  entrada   Entrada?   @relation(fields: [entradaId], references: [id])
-
-  creadoEn DateTime @default(now())
-
-  @@map("movimientos_proveedores")
 }
