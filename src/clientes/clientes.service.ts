@@ -1,10 +1,17 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { EstadoEntidad, Prisma } from '../../generated/prisma/client';
+
+import {
+  EstadoEntidad,
+  Prisma,
+  TipoOperacion,
+} from '../../generated/prisma/client';
+
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { FilterClienteLedgerDto } from './dto/filter-cliente-ledger';
 import { UpdateEstadoClienteDto } from './dto/update-estado-cliente.dto';
+import { FilterClientesCarteraDto } from './dto/filter-clientes-cartera.dto';
 
 @Injectable()
 export class ClientesService {
@@ -31,7 +38,9 @@ export class ClientesService {
 
   async findOne(id: string) {
     const cliente = await this.prisma.cliente.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
     if (!cliente) {
@@ -45,7 +54,9 @@ export class ClientesService {
     await this.validarClienteExiste(id);
 
     return this.prisma.cliente.update({
-      where: { id },
+      where: {
+        id,
+      },
       data: {
         nombre: dto.nombre,
         documento: dto.documento,
@@ -59,7 +70,9 @@ export class ClientesService {
     await this.validarClienteExiste(id);
 
     return this.prisma.cliente.update({
-      where: { id },
+      where: {
+        id,
+      },
       data: {
         estado: dto.estado,
       },
@@ -70,7 +83,9 @@ export class ClientesService {
     await this.validarClienteExiste(id);
 
     return this.prisma.cliente.update({
-      where: { id },
+      where: {
+        id,
+      },
       data: {
         estado: EstadoEntidad.INACTIVO,
       },
@@ -109,7 +124,9 @@ export class ClientesService {
 
   async getLedger(id: string, filters: FilterClienteLedgerDto) {
     const cliente = await this.prisma.cliente.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
       select: {
         id: true,
         nombre: true,
@@ -201,9 +218,29 @@ export class ClientesService {
             },
           },
         },
+        salida: {
+          include: {
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            cuenta: {
+              select: {
+                id: true,
+                nombre: true,
+                moneda: true,
+              },
+            },
+          },
+        },
       },
     });
 
+    /**
+     * Balance del período filtrado
+     */
     const totalDebitosCop = movimientos.reduce(
       (acc, mov) => acc + Number(mov.debitoCop),
       0,
@@ -216,6 +253,116 @@ export class ClientesService {
 
     const saldoFiltradoCop = totalDebitosCop - totalCreditosCop;
 
+    /**
+     * Balance total real del cliente, sin filtros.
+     * Este es el saldo histórico que debe mostrarse en el cierre del PDF.
+     */
+    const movimientosTotales = await this.prisma.movimientoCliente.findMany({
+      where: {
+        clienteId: id,
+      },
+      select: {
+        debitoCop: true,
+        creditoCop: true,
+      },
+    });
+
+    const totalDebitosGlobalCop = movimientosTotales.reduce(
+      (acc, mov) => acc + Number(mov.debitoCop),
+      0,
+    );
+
+    const totalCreditosGlobalCop = movimientosTotales.reduce(
+      (acc, mov) => acc + Number(mov.creditoCop),
+      0,
+    );
+
+    const saldoTotalCop = totalDebitosGlobalCop - totalCreditosGlobalCop;
+
+    /**
+     * Utilidad real del período filtrado.
+     * Solo VENTA y OPERACION_DIRECTA generan utilidad real.
+     */
+    const totalUtilidadRealCop = movimientos.reduce((acc, mov) => {
+      if (!mov.operacion) {
+        return acc;
+      }
+
+      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+        mov.operacion.tipo,
+      );
+
+      if (!generaUtilidadReal) {
+        return acc;
+      }
+
+      return acc + Number(mov.operacion.utilidadCop ?? 0);
+    }, 0);
+
+    const utilidadPorDiaMap = new Map<string, number>();
+
+    for (const mov of movimientos) {
+      if (!mov.operacion) {
+        continue;
+      }
+
+      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+        mov.operacion.tipo,
+      );
+
+      if (!generaUtilidadReal) {
+        continue;
+      }
+
+      const fecha = mov.creadoEn.toISOString().slice(0, 10);
+      const utilidadCop = Number(mov.operacion.utilidadCop ?? 0);
+
+      utilidadPorDiaMap.set(
+        fecha,
+        (utilidadPorDiaMap.get(fecha) ?? 0) + utilidadCop,
+      );
+    }
+
+    const utilidadPorDia = Array.from(utilidadPorDiaMap.entries())
+      .map(([fecha, utilidadCop]) => ({
+        fecha,
+        utilidadCop,
+      }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+    /**
+     * Saldo acumulado del período filtrado.
+     * Ojo: este acumulado empieza en 0 dentro del filtro.
+     * El saldo real total se devuelve aparte como saldoTotalCop.
+     */
+    const movimientosOrdenadosAsc = [...movimientos].sort(
+      (a, b) => a.creadoEn.getTime() - b.creadoEn.getTime(),
+    );
+
+    let saldoAcumuladoCop = 0;
+
+    const movimientosConSaldo = movimientosOrdenadosAsc.map((mov) => {
+      const debitoCop = Number(mov.debitoCop);
+      const creditoCop = Number(mov.creditoCop);
+
+      saldoAcumuladoCop += debitoCop - creditoCop;
+
+      const utilidadRealCop =
+        mov.operacion && this.operacionGeneraUtilidadReal(mov.operacion.tipo)
+          ? Number(mov.operacion.utilidadCop ?? 0)
+          : 0;
+
+      return {
+        ...mov,
+        utilidadRealCop,
+        saldoAcumuladoCop,
+      };
+    });
+
+    const movimientosRespuesta = movimientosConSaldo.sort(
+      (a, b) => b.creadoEn.getTime() - a.creadoEn.getTime(),
+    );
+
     return {
       cliente,
       filtros: {
@@ -225,18 +372,144 @@ export class ClientesService {
         moneda: filters.moneda ?? null,
       },
       resumen: {
+        /**
+         * Totales del período filtrado
+         */
         totalDebitosCop,
         totalCreditosCop,
         saldoFiltradoCop,
         estado: this.obtenerEstadoBalance(saldoFiltradoCop),
+
+        /**
+         * Totales históricos reales del cliente
+         */
+        totalDebitosGlobalCop,
+        totalCreditosGlobalCop,
+        saldoTotalCop,
+        estadoTotal: this.obtenerEstadoBalance(saldoTotalCop),
+
+        /**
+         * Utilidad real del período filtrado
+         */
+        totalUtilidadRealCop,
+        utilidadPorDia,
       },
-      movimientos,
+      movimientos: movimientosRespuesta,
+    };
+  }
+
+  async getCartera(filters: FilterClientesCarteraDto) {
+    const where: Prisma.ClienteWhereInput = {};
+
+    if (filters.buscar) {
+      where.OR = [
+        {
+          nombre: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+        {
+          documento: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+        {
+          telefono: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+      ];
+    }
+
+    const clientes = await this.prisma.cliente.findMany({
+      where,
+      select: {
+        id: true,
+        nombre: true,
+        documento: true,
+        telefono: true,
+        estado: true,
+        movimientos: {
+          select: {
+            debitoCop: true,
+            creditoCop: true,
+          },
+        },
+      },
+      orderBy: {
+        nombre: 'asc',
+      },
+    });
+
+    const cartera = clientes
+      .map((cliente) => {
+        const totalDebitosCop = cliente.movimientos.reduce(
+          (total, movimiento) => total + Number(movimiento.debitoCop),
+          0,
+        );
+
+        const totalCreditosCop = cliente.movimientos.reduce(
+          (total, movimiento) => total + Number(movimiento.creditoCop),
+          0,
+        );
+
+        const saldoCop = totalDebitosCop - totalCreditosCop;
+
+        return {
+          cliente: {
+            id: cliente.id,
+            nombre: cliente.nombre,
+            documento: cliente.documento,
+            telefono: cliente.telefono,
+            estado: cliente.estado,
+          },
+          totalDebitosCop,
+          totalCreditosCop,
+          saldoCop,
+          estadoCartera: this.obtenerEstadoBalance(saldoCop),
+        };
+      })
+      .filter((item) => item.saldoCop !== 0);
+
+    const meDeben = cartera
+      .filter((item) => item.saldoCop > 0)
+      .sort((a, b) => b.saldoCop - a.saldoCop);
+
+    const lesDebo = cartera
+      .filter((item) => item.saldoCop < 0)
+      .sort((a, b) => Math.abs(b.saldoCop) - Math.abs(a.saldoCop));
+
+    const totalPorCobrarCop = meDeben.reduce(
+      (total, item) => total + item.saldoCop,
+      0,
+    );
+
+    const totalPorPagarCop = lesDebo.reduce(
+      (total, item) => total + Math.abs(item.saldoCop),
+      0,
+    );
+
+    return {
+      resumen: {
+        totalPorCobrarCop,
+        totalPorPagarCop,
+        balanceNetoCop: totalPorCobrarCop - totalPorPagarCop,
+        cantidadMeDeben: meDeben.length,
+        cantidadLesDebo: lesDebo.length,
+      },
+      meDeben,
+      lesDebo,
     };
   }
 
   async getPerfil(id: string) {
     const cliente = await this.prisma.cliente.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
       include: {
         movimientos: {
           orderBy: {
@@ -246,6 +519,7 @@ export class ClientesService {
           include: {
             operacion: true,
             entrada: true,
+            salida: true,
           },
         },
         operacionesComoDeudor: {
@@ -308,6 +582,15 @@ export class ClientesService {
             },
           },
         },
+        salidasComoAcreedor: {
+          orderBy: {
+            creadoEn: 'desc',
+          },
+          take: 10,
+          include: {
+            cuenta: true,
+          },
+        },
       },
     });
 
@@ -327,6 +610,22 @@ export class ClientesService {
 
     const saldoCop = totalDebitosCop - totalCreditosCop;
 
+    const totalUtilidadRealCop = cliente.movimientos.reduce((acc, mov) => {
+      if (!mov.operacion) {
+        return acc;
+      }
+
+      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+        mov.operacion.tipo,
+      );
+
+      if (!generaUtilidadReal) {
+        return acc;
+      }
+
+      return acc + Number(mov.operacion.utilidadCop ?? 0);
+    }, 0);
+
     return {
       cliente: {
         id: cliente.id,
@@ -343,18 +642,22 @@ export class ClientesService {
         totalCreditosCop,
         saldoCop,
         estado: this.obtenerEstadoBalance(saldoCop),
+        totalUtilidadRealCop,
       },
       ultimosMovimientos: cliente.movimientos,
       ultimasOperacionesComoDeudor: cliente.operacionesComoDeudor,
       ultimasOperacionesComoAcreedor: cliente.operacionesComoAcreedor,
       ultimasEntradasComoDeudor: cliente.entradasComoDeudor,
       ultimasEntradasComoAcreedor: cliente.entradasComoAcreedor,
+      ultimasSalidasComoAcreedor: cliente.salidasComoAcreedor,
     };
   }
 
   private async validarClienteExiste(id: string) {
     const cliente = await this.prisma.cliente.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
       select: {
         id: true,
       },
@@ -377,5 +680,12 @@ export class ClientesService {
     }
 
     return 'SALDADO';
+  }
+
+  private operacionGeneraUtilidadReal(tipoOperacion: TipoOperacion) {
+    return (
+      tipoOperacion === TipoOperacion.VENTA ||
+      tipoOperacion === TipoOperacion.OPERACION_DIRECTA
+    );
   }
 }

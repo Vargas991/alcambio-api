@@ -8,6 +8,9 @@ import { UsuariosModule } from './usuarios/usuarios.module';
 import { ConfigModule } from '@nestjs/config';
 import { ClientesModule } from './clientes/clientes.module';
 import { OperacionesModule } from './operaciones/operaciones.module';
+import { EntradasModule } from './entradas/entradas.module';
+import { SalidasModule } from './salidas/salidas.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -15,7 +18,7 @@ import { OperacionesModule } from './operaciones/operaciones.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    PrismaModule, CuentasModule, AuthModule, UsuariosModule, ClientesModule, OperacionesModule],
+    PrismaModule, CuentasModule, AuthModule, UsuariosModule, ClientesModule, OperacionesModule, EntradasModule, SalidasModule, DashboardModule],
   controllers: [AppController],
   providers: [AppService],
 })

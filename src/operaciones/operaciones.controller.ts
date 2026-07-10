@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 
@@ -18,6 +19,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
+import { FilterOperacionesDto } from './dto/filter-operaciones.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('operaciones')
@@ -33,8 +35,8 @@ export class OperacionesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
-  async findAll() {
-    const data = await this.operacionesService.findAll();
+  async findAll( @Query() filters: FilterOperacionesDto) {
+    const data = await this.operacionesService.findAll(filters);
     return successResponse(data, 'Operaciones encontradas correctamente.');
   }
 

@@ -18,6 +18,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOperacionDto } from './dto/create-operacion.dto';
 import { CancelarOperacionDto } from './dto/cancelar-operacion.dto';
+import { FilterOperacionesDto } from './dto/filter-operaciones.dto';
 
 @Injectable()
 export class OperacionesService {
@@ -73,10 +74,93 @@ export class OperacionesService {
     });
   }
 
-  findAll() {
+  findAll(filters: FilterOperacionesDto) {
+    const where: Prisma.OperacionWhereInput = {};
+
+    if (filters.tipo) {
+      where.tipo = filters.tipo;
+    }
+
+    if (filters.estado) {
+      where.estado = filters.estado;
+    }
+
+    if (filters.moneda) {
+      where.monedaTransaccion = filters.moneda;
+    }
+
+    if (filters.deudorId) {
+      where.deudorId = filters.deudorId;
+    }
+
+    if (filters.acreedorId) {
+      where.acreedorId = filters.acreedorId;
+    }
+
+    if (filters.cuentaOperativaId) {
+      where.cuentaOperativaId = filters.cuentaOperativaId;
+    }
+
+    const desde = filters.desde ? new Date(filters.desde) : new Date();
+    const hasta = filters.hasta ? new Date(filters.hasta) : new Date();
+
+    desde.setHours(0, 0, 0, 0);
+    hasta.setHours(23, 59, 59, 999);
+
+    where.fechaOperacion = {
+      gte: desde,
+      lte: hasta,
+    };
+
+    if (filters.buscar) {
+      where.OR = [
+        {
+          codigo: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+        {
+          nombre: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+        {
+          destinatario: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+        {
+          notas: {
+            contains: filters.buscar,
+            mode: 'insensitive',
+          },
+        },
+        {
+          deudor: {
+            nombre: {
+              contains: filters.buscar,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          acreedor: {
+            nombre: {
+              contains: filters.buscar,
+              mode: 'insensitive',
+            },
+          },
+        },
+      ];
+    }
+
     return this.prisma.operacion.findMany({
+      where,
       orderBy: {
-        creadoEn: 'desc',
+        fechaOperacion: 'desc',
       },
       include: this.operacionInclude(),
     });

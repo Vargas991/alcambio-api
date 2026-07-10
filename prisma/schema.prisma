@@ -78,6 +78,22 @@ enum RolUsuario {
   VISOR
 }
 
+enum TipoSalida {
+  PAGO_ACREEDOR
+  GASTO
+  RETIRO
+}
+
+enum EstadoSalida {
+  REGISTRADA
+  CANCELADA
+}
+
+enum EstadoEntrada {
+  REGISTRADA
+  CANCELADA
+}
+
 model Usuario {
   id       String        @id @default(uuid())
   nombre   String
@@ -106,6 +122,8 @@ model Cliente {
   entradasComoDeudor   Entrada[] @relation("EntradaDeudor")
   entradasComoAcreedor Entrada[] @relation("EntradaAcreedor")
 
+  salidasComoAcreedor Salida[] @relation("SalidaAcreedor")
+
   movimientos MovimientoCliente[]
 
   creadoEn      DateTime @default(now())
@@ -126,6 +144,7 @@ model Cuenta {
 
   movimientos MovimientoCuenta[]
   entradas    Entrada[]
+  salidas     Salida[]
   operaciones Operacion[]
 
   creadoEn      DateTime @default(now())
@@ -178,7 +197,8 @@ model Operacion {
 model Entrada {
   id String @id @default(uuid())
 
-  tipo TipoEntrada
+  tipo   TipoEntrada
+  estado EstadoEntrada @default(REGISTRADA)
 
   deudorId   String
   acreedorId String?
@@ -200,6 +220,33 @@ model Entrada {
   actualizadoEn DateTime @updatedAt
 
   @@map("entradas")
+}
+
+model Salida {
+  id String @id @default(uuid())
+
+  tipo TipoSalida
+
+  acreedorId String?
+  cuentaId   String
+
+  montoCop Decimal
+
+  descripcion String?
+  referencia  String?
+  notas       String?
+
+  estado EstadoSalida @default(REGISTRADA)
+
+  acreedor Cliente? @relation("SalidaAcreedor", fields: [acreedorId], references: [id])
+  cuenta   Cuenta   @relation(fields: [cuentaId], references: [id])
+
+  movimientosCliente MovimientoCliente[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@map("salidas")
 }
 
 model MovimientoCuenta {
@@ -233,6 +280,7 @@ model MovimientoCliente {
 
   operacionId String?
   entradaId   String?
+  salidaId    String?
 
   monedaTransaccion Moneda?
   montoTransaccion  Decimal?
@@ -245,6 +293,7 @@ model MovimientoCliente {
   cliente   Cliente    @relation(fields: [clienteId], references: [id])
   operacion Operacion? @relation(fields: [operacionId], references: [id])
   entrada   Entrada?   @relation(fields: [entradaId], references: [id])
+  salida    Salida?    @relation(fields: [salidaId], references: [id])
 
   creadoEn DateTime @default(now())
 
