@@ -76,6 +76,7 @@ export class OperacionesService {
 
   findAll(filters: FilterOperacionesDto) {
     const where: Prisma.OperacionWhereInput = {};
+    const andConditions: Prisma.OperacionWhereInput[] = [];
 
     if (filters.tipo) {
       where.tipo = filters.tipo;
@@ -97,20 +98,32 @@ export class OperacionesService {
       where.acreedorId = filters.acreedorId;
     }
 
+    if (filters.clienteId) {
+      andConditions.push({
+        OR: [
+          { deudorId: filters.clienteId },
+          { acreedorId: filters.clienteId },
+        ],
+      });
+    }
+
     if (filters.cuentaOperativaId) {
       where.cuentaOperativaId = filters.cuentaOperativaId;
     }
 
-    const desde = filters.desde ? new Date(filters.desde) : new Date();
-    const hasta = filters.hasta ? new Date(filters.hasta) : new Date();
+    if (filters.desde || filters.hasta) {
+      const fechaOperacion: Prisma.DateTimeFilter = {};
 
-    desde.setHours(0, 0, 0, 0);
-    hasta.setHours(23, 59, 59, 999);
+      if (filters.desde) {
+        fechaOperacion.gte = this.buildStartOfDayUtcFromLocal(filters.desde);
+      }
 
-    where.fechaOperacion = {
-      gte: desde,
-      lte: hasta,
-    };
+      if (filters.hasta) {
+        fechaOperacion.lte = this.buildEndOfDayUtcFromLocal(filters.hasta);
+      }
+
+      where.fechaOperacion = fechaOperacion;
+    }
 
     if (filters.buscar) {
       where.OR = [
@@ -156,6 +169,22 @@ export class OperacionesService {
         },
       ];
     }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
+    }
+
+
+    console.log({
+      desdeInput: filters.desde,
+      hastaInput: filters.hasta,
+      desdeFinal: filters.desde
+        ? this.buildStartOfDayUtcFromLocal(filters.desde).toISOString()
+        : null,
+      hastaFinal: filters.hasta
+        ? this.buildEndOfDayUtcFromLocal(filters.hasta).toISOString()
+        : null,
+    });
 
     return this.prisma.operacion.findMany({
       where,
@@ -698,6 +727,22 @@ export class OperacionesService {
         referenciaId: operacionId,
       },
     });
+  }
+
+  private buildStartOfDayUtcFromLocal(date: string) {
+    const [year, month, day] = date.split('-').map(Number);
+
+    // Venezuela UTC-4:
+    // 2026-07-13 00:00 local = 2026-07-13T04:00:00.000Z
+    return new Date(Date.UTC(year, month - 1, day, 4, 0, 0, 0));
+  }
+
+  private buildEndOfDayUtcFromLocal(date: string) {
+    const [year, month, day] = date.split('-').map(Number);
+
+    // Venezuela UTC-4:
+    // 2026-07-13 23:59 local = 2026-07-14T03:59:59.999Z
+    return new Date(Date.UTC(year, month - 1, day + 1, 3, 59, 59, 999));
   }
 
   private validarDtoPorTipo(dto: CreateOperacionDto) {

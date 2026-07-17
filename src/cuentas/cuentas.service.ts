@@ -15,21 +15,18 @@ import { AjustarSaldoCuentaDto } from './dto/ajustar-saldo-cuenta.dto';
 import { UpdateEstadoCuentaDto } from './dto/update-estado-cuenta.dto';
 import { CreateGastoCuentaDto } from './dto/create-gasto-cuenta.dto';
 import { CreateTrasladoCuentaDto } from './dto/create-traslado-cuenta.dto';
+import { UpdateCuentaDto } from './dto/update-cuenta.dto';
 
 @Injectable()
 export class CuentasService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateCuentaDto) {
-    if (dto.categoria === CategoriaCuenta.BASE_COP && dto.moneda !== 'COP') {
-      throw new BadRequestException('Las cuentas BASE_COP deben ser en COP.');
-    }
-
-    if (dto.categoria === CategoriaCuenta.OPERATIVA && dto.moneda === 'COP') {
-      throw new BadRequestException(
-        'Las cuentas OPERATIVAS deben ser BS, USD o USDT.',
-      );
-    }
+    this.validarCuentaPorCategoria({
+      categoria: dto.categoria,
+      moneda: dto.moneda,
+      aplica4x1000: dto.aplica4x1000 ?? false,
+    });
 
     const saldoInicial = dto.saldoInicial ?? 0;
 
@@ -41,6 +38,7 @@ export class CuentasService {
           categoria: dto.categoria,
           tipo: dto.tipo,
           saldo: saldoInicial,
+          aplica4x1000: dto.aplica4x1000 ?? false,
           notas: dto.notas,
         },
       });
@@ -97,7 +95,9 @@ export class CuentasService {
 
   async findOne(id: string) {
     const cuenta = await this.prisma.cuenta.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
       include: {
         movimientos: {
           orderBy: {
@@ -128,11 +128,50 @@ export class CuentasService {
     });
   }
 
+  async update(id: string, dto: UpdateCuentaDto) {
+    const cuenta = await this.prisma.cuenta.findUnique({
+      where: {
+        id,
+      },
+    });
+
+    if (!cuenta) {
+      throw new NotFoundException('La cuenta no existe.');
+    }
+
+    /**
+     * En update no estamos permitiendo cambiar moneda ni categoría.
+     * Por eso se valida contra los valores reales actuales de la cuenta.
+     */
+    const aplica4x1000Final =
+      dto.aplica4x1000 !== undefined ? dto.aplica4x1000 : cuenta.aplica4x1000;
+
+    this.validarCuentaPorCategoria({
+      categoria: cuenta.categoria,
+      moneda: cuenta.moneda,
+      aplica4x1000: aplica4x1000Final,
+    });
+
+    return this.prisma.cuenta.update({
+      where: {
+        id,
+      },
+      data: {
+        nombre: dto.nombre,
+        tipo: dto.tipo,
+        notas: dto.notas,
+        aplica4x1000: dto.aplica4x1000,
+      },
+    });
+  }
+
   async updateEstado(id: string, dto: UpdateEstadoCuentaDto) {
     await this.validarCuentaExiste(id);
 
     return this.prisma.cuenta.update({
-      where: { id },
+      where: {
+        id,
+      },
       data: {
         estado: dto.estado,
       },
@@ -141,7 +180,9 @@ export class CuentasService {
 
   async ajustarSaldo(id: string, dto: AjustarSaldoCuentaDto) {
     const cuenta = await this.prisma.cuenta.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
     if (!cuenta) {
@@ -165,7 +206,9 @@ export class CuentasService {
 
     return this.prisma.$transaction(async (tx) => {
       const cuentaActualizada = await tx.cuenta.update({
-        where: { id },
+        where: {
+          id,
+        },
         data: {
           saldo: saldoReal,
         },
@@ -191,7 +234,9 @@ export class CuentasService {
 
   async registrarGasto(id: string, dto: CreateGastoCuentaDto) {
     const cuenta = await this.prisma.cuenta.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
     if (!cuenta) {
@@ -199,7 +244,9 @@ export class CuentasService {
     }
 
     if (cuenta.estado !== EstadoEntidad.ACTIVO) {
-      throw new BadRequestException('No se puede registrar gasto en una cuenta inactiva.');
+      throw new BadRequestException(
+        'No se puede registrar gasto en una cuenta inactiva.',
+      );
     }
 
     if (cuenta.categoria !== CategoriaCuenta.BASE_COP) {
@@ -209,20 +256,33 @@ export class CuentasService {
     }
 
     if (cuenta.moneda !== 'COP') {
-      throw new BadRequestException('Los gastos deben registrarse en cuentas COP.');
+      throw new BadRequestException(
+        'Los gastos deben registrarse en cuentas COP.',
+      );
     }
 
     const saldoActual = Number(cuenta.saldo);
 
-    if (saldoActual < dto.monto) {
-      throw new BadRequestException('La cuenta no tiene saldo suficiente para este gasto.');
+    const calculoSalida = this.calcularSalidaCuenta({
+      monto: dto.monto,
+      cuentaAplica4x1000: cuenta.aplica4x1000,
+    });
+
+    if (saldoActual < calculoSalida.totalDebitado) {
+      throw new BadRequestException(
+        'La cuenta no tiene saldo suficiente para este gasto.',
+      );
     }
 
-    const saldoNuevo = saldoActual - dto.monto;
+    const saldoNuevo = this.redondearDosDecimales(
+      saldoActual - calculoSalida.totalDebitado,
+    );
 
     return this.prisma.$transaction(async (tx) => {
       const cuentaActualizada = await tx.cuenta.update({
-        where: { id },
+        where: {
+          id,
+        },
         data: {
           saldo: saldoNuevo,
         },
@@ -232,7 +292,7 @@ export class CuentasService {
         data: {
           cuentaId: id,
           tipo: TipoMovimientoCuenta.GASTO,
-          monto: dto.monto,
+          monto: calculoSalida.totalDebitado,
           moneda: cuenta.moneda,
           saldoAnterior: saldoActual,
           saldoNuevo,
@@ -248,7 +308,9 @@ export class CuentasService {
 
   async trasladar(dto: CreateTrasladoCuentaDto) {
     if (dto.cuentaOrigenId === dto.cuentaDestinoId) {
-      throw new BadRequestException('La cuenta origen y destino no pueden ser la misma.');
+      throw new BadRequestException(
+        'La cuenta origen y destino no pueden ser la misma.',
+      );
     }
 
     const cuentaOrigen = await this.prisma.cuenta.findUnique({
@@ -287,12 +349,24 @@ export class CuentasService {
     const saldoOrigenActual = Number(cuentaOrigen.saldo);
     const saldoDestinoActual = Number(cuentaDestino.saldo);
 
-    if (saldoOrigenActual < dto.monto) {
-      throw new BadRequestException('La cuenta origen no tiene saldo suficiente.');
+    const calculoSalidaOrigen = this.calcularSalidaCuenta({
+      monto: dto.monto,
+      cuentaAplica4x1000: cuentaOrigen.aplica4x1000,
+    });
+
+    if (saldoOrigenActual < calculoSalidaOrigen.totalDebitado) {
+      throw new BadRequestException(
+        'La cuenta origen no tiene saldo suficiente.',
+      );
     }
 
-    const saldoOrigenNuevo = saldoOrigenActual - dto.monto;
-    const saldoDestinoNuevo = saldoDestinoActual + dto.monto;
+    const saldoOrigenNuevo = this.redondearDosDecimales(
+      saldoOrigenActual - calculoSalidaOrigen.totalDebitado,
+    );
+
+    const saldoDestinoNuevo = this.redondearDosDecimales(
+      saldoDestinoActual + dto.monto,
+    );
 
     return this.prisma.$transaction(async (tx) => {
       const origenActualizada = await tx.cuenta.update({
@@ -317,7 +391,7 @@ export class CuentasService {
         data: {
           cuentaId: cuentaOrigen.id,
           tipo: TipoMovimientoCuenta.TRASLADO_SALIDA,
-          monto: dto.monto,
+          monto: calculoSalidaOrigen.totalDebitado,
           moneda: cuentaOrigen.moneda,
           saldoAnterior: saldoOrigenActual,
           saldoNuevo: saldoOrigenNuevo,
@@ -346,6 +420,63 @@ export class CuentasService {
         cuentaDestino: destinoActualizada,
       };
     });
+  }
+
+  private redondearDosDecimales(valor: number) {
+    return Math.round((valor + Number.EPSILON) * 100) / 100;
+  }
+
+  private calcularSalidaCuenta(params: {
+    monto: number;
+    cuentaAplica4x1000: boolean;
+  }) {
+    const impuestoCuenta4x1000 = params.cuentaAplica4x1000
+      ? this.redondearDosDecimales(params.monto * 0.004)
+      : 0;
+
+    const totalDebitado = this.redondearDosDecimales(
+      params.monto + impuestoCuenta4x1000,
+    );
+
+    return {
+      montoBase: params.monto,
+      impuestoCuenta4x1000,
+      totalDebitado,
+    };
+  }
+
+  private validarCuentaPorCategoria(params: {
+    categoria: CategoriaCuenta;
+    moneda: string;
+    aplica4x1000: boolean;
+  }) {
+    if (
+      params.categoria === CategoriaCuenta.BASE_COP &&
+      params.moneda !== 'COP'
+    ) {
+      throw new BadRequestException('Las cuentas BASE_COP deben ser en COP.');
+    }
+
+    if (
+      params.categoria === CategoriaCuenta.OPERATIVA &&
+      params.moneda === 'COP'
+    ) {
+      throw new BadRequestException(
+        'Las cuentas OPERATIVAS deben ser BS, USD o USDT.',
+      );
+    }
+
+    if (params.aplica4x1000 && params.moneda !== 'COP') {
+      throw new BadRequestException(
+        'El 4x1000 solo puede aplicar en cuentas COP.',
+      );
+    }
+
+    if (params.aplica4x1000 && params.categoria !== CategoriaCuenta.BASE_COP) {
+      throw new BadRequestException(
+        'El 4x1000 solo puede aplicar en cuentas BASE_COP.',
+      );
+    }
   }
 
   private async validarCuentaExiste(id: string) {

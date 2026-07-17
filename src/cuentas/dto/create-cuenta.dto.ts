@@ -5,6 +5,7 @@ import {
 } from '../../../generated/prisma/client';
 
 import {
+  IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -35,4 +36,8 @@ export class CreateCuentaDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  aplica4x1000?: boolean;
 }

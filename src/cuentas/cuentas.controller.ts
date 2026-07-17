@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
+import { UpdateCuentaDto } from './dto/update-cuenta.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('cuentas')
@@ -104,5 +105,12 @@ export class CuentasController {
   async trasladar(@Body() dto: CreateTrasladoCuentaDto) {
     const data = await this.cuentasService.trasladar(dto);
     return successResponse(data, 'Traslado realizado correctamente.');
+  }
+
+  @Roles(RolUsuario.ADMIN)
+  @Patch(':id')
+  async update(@Param('id') id: string, @Body() dto: UpdateCuentaDto) {
+    const data = await this.cuentasService.update(id, dto);
+    return successResponse(data, 'Cuenta actualizada correctamente.');
   }
 }

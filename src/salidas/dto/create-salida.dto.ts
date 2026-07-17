@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -23,9 +24,25 @@ export class CreateSalidaDto {
   @IsNotEmpty()
   cuentaId!: string;
 
+  /**
+   * Monto base que se quiere pagar.
+   * Ejemplo: quiero pagar 1.000.000 al proveedor.
+   */
   @IsNumber()
   @Min(1)
   montoCop!: number;
+
+  /**
+   * Indica si el proveedor cobra 4x1000.
+   * Si true:
+   * montoEnviado = montoCop + 4x1000 proveedor
+   *
+   * El 4x1000 de la cuenta propia NO viene aquí.
+   * Se calcula según cuenta.aplica4x1000.
+   */
+  @IsOptional()
+  @IsBoolean()
+  proveedorCobra4x1000?: boolean;
 
   @IsOptional()
   @IsString()

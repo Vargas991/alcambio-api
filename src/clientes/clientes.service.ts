@@ -12,6 +12,10 @@ import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { FilterClienteLedgerDto } from './dto/filter-cliente-ledger';
 import { UpdateEstadoClienteDto } from './dto/update-estado-cliente.dto';
 import { FilterClientesCarteraDto } from './dto/filter-clientes-cartera.dto';
+import {
+  buildEndOfDayUtcFromLocal,
+  buildStartOfDayUtcFromLocal,
+} from 'src/common/helpers/date-range.helper';
 
 @Injectable()
 export class ClientesService {
@@ -122,281 +126,286 @@ export class ClientesService {
     };
   }
 
-  async getLedger(id: string, filters: FilterClienteLedgerDto) {
-    const cliente = await this.prisma.cliente.findUnique({
-      where: {
-        id,
-      },
-      select: {
-        id: true,
-        nombre: true,
-        documento: true,
-        telefono: true,
-        estado: true,
-      },
-    });
+async getLedger(id: string, filters: FilterClienteLedgerDto) {
+  const cliente = await this.prisma.cliente.findUnique({
+    where: {
+      id,
+    },
+    select: {
+      id: true,
+      nombre: true,
+      documento: true,
+      telefono: true,
+      estado: true,
+    },
+  });
 
-    if (!cliente) {
-      throw new BadRequestException('El cliente no existe.');
-    }
+  if (!cliente) {
+    throw new BadRequestException('El cliente no existe.');
+  }
 
-    const where: Prisma.MovimientoClienteWhereInput = {
+  const andConditions: Prisma.MovimientoClienteWhereInput[] = [
+    {
       clienteId: id,
-    };
+    },
+  ];
 
-    if (filters.tipo) {
-      where.tipo = filters.tipo;
-    }
+  if (filters.tipoMov) {
+    andConditions.push({
+      tipo: filters.tipoMov,
+    });
+  }
 
-    if (filters.moneda) {
-      where.monedaTransaccion = filters.moneda;
-    }
+  const puedeFiltrarPorOperacion =
+    !filters.tipoMov || filters.tipoMov === 'OPERACION';
 
-    if (filters.desde || filters.hasta) {
-      where.creadoEn = {};
-
-      if (filters.desde) {
-        where.creadoEn.gte = new Date(filters.desde);
-      }
-
-      if (filters.hasta) {
-        const hasta = new Date(filters.hasta);
-        hasta.setHours(23, 59, 59, 999);
-        where.creadoEn.lte = hasta;
-      }
-    }
-
-    const movimientos = await this.prisma.movimientoCliente.findMany({
-      where,
-      orderBy: {
-        creadoEn: 'desc',
+  if (puedeFiltrarPorOperacion && (filters.tipo || filters.estado)) {
+    andConditions.push({
+      operacion: {
+        ...(filters.tipo && {
+          tipo: filters.tipo,
+        }),
+        ...(filters.estado && {
+          estado: filters.estado,
+        }),
       },
-      include: {
-        operacion: {
-          include: {
-            deudor: {
-              select: {
-                id: true,
-                nombre: true,
-              },
-            },
-            acreedor: {
-              select: {
-                id: true,
-                nombre: true,
-              },
-            },
-            cuentaOperativa: {
-              select: {
-                id: true,
-                nombre: true,
-                moneda: true,
-              },
-            },
-          },
-        },
-        entrada: {
-          include: {
-            deudor: {
-              select: {
-                id: true,
-                nombre: true,
-              },
-            },
-            acreedor: {
-              select: {
-                id: true,
-                nombre: true,
-              },
-            },
-            cuenta: {
-              select: {
-                id: true,
-                nombre: true,
-                moneda: true,
-              },
+    });
+  }
+
+  if (filters.moneda) {
+    andConditions.push({
+      monedaTransaccion: filters.moneda,
+    });
+  }
+
+  if (filters.desde || filters.hasta) {
+    const creadoEn: Prisma.DateTimeFilter = {};
+
+    if (filters.desde) {
+      creadoEn.gte = buildStartOfDayUtcFromLocal(filters.desde);
+    }
+
+    if (filters.hasta) {
+      creadoEn.lte = buildEndOfDayUtcFromLocal(filters.hasta);
+    }
+
+    andConditions.push({
+      creadoEn,
+    });
+  }
+
+  const where: Prisma.MovimientoClienteWhereInput = {
+    AND: andConditions,
+  };
+
+  const movimientos = await this.prisma.movimientoCliente.findMany({
+    where,
+    orderBy: {
+      creadoEn: 'desc',
+    },
+    include: {
+      operacion: {
+        include: {
+          deudor: {
+            select: {
+              id: true,
+              nombre: true,
             },
           },
-        },
-        salida: {
-          include: {
-            acreedor: {
-              select: {
-                id: true,
-                nombre: true,
-              },
+          acreedor: {
+            select: {
+              id: true,
+              nombre: true,
             },
-            cuenta: {
-              select: {
-                id: true,
-                nombre: true,
-                moneda: true,
-              },
+          },
+          cuentaOperativa: {
+            select: {
+              id: true,
+              nombre: true,
+              moneda: true,
             },
           },
         },
       },
-    });
-
-    /**
-     * Balance del período filtrado
-     */
-    const totalDebitosCop = movimientos.reduce(
-      (acc, mov) => acc + Number(mov.debitoCop),
-      0,
-    );
-
-    const totalCreditosCop = movimientos.reduce(
-      (acc, mov) => acc + Number(mov.creditoCop),
-      0,
-    );
-
-    const saldoFiltradoCop = totalDebitosCop - totalCreditosCop;
-
-    /**
-     * Balance total real del cliente, sin filtros.
-     * Este es el saldo histórico que debe mostrarse en el cierre del PDF.
-     */
-    const movimientosTotales = await this.prisma.movimientoCliente.findMany({
-      where: {
-        clienteId: id,
+      entrada: {
+        include: {
+          deudor: {
+            select: {
+              id: true,
+              nombre: true,
+            },
+          },
+          acreedor: {
+            select: {
+              id: true,
+              nombre: true,
+            },
+          },
+          cuenta: {
+            select: {
+              id: true,
+              nombre: true,
+              moneda: true,
+            },
+          },
+        },
       },
-      select: {
-        debitoCop: true,
-        creditoCop: true,
+      salida: {
+        include: {
+          acreedor: {
+            select: {
+              id: true,
+              nombre: true,
+            },
+          },
+          cuenta: {
+            select: {
+              id: true,
+              nombre: true,
+              moneda: true,
+            },
+          },
+        },
       },
-    });
+    },
+  });
 
-    const totalDebitosGlobalCop = movimientosTotales.reduce(
-      (acc, mov) => acc + Number(mov.debitoCop),
-      0,
-    );
+  const totalDebitosCop = movimientos.reduce(
+    (acc, mov) => acc + Number(mov.debitoCop),
+    0,
+  );
 
-    const totalCreditosGlobalCop = movimientosTotales.reduce(
-      (acc, mov) => acc + Number(mov.creditoCop),
-      0,
-    );
+  const totalCreditosCop = movimientos.reduce(
+    (acc, mov) => acc + Number(mov.creditoCop),
+    0,
+  );
 
-    const saldoTotalCop = totalDebitosGlobalCop - totalCreditosGlobalCop;
+  const saldoFiltradoCop = totalDebitosCop - totalCreditosCop;
 
-    /**
-     * Utilidad real del período filtrado.
-     * Solo VENTA y OPERACION_DIRECTA generan utilidad real.
-     */
-    const totalUtilidadRealCop = movimientos.reduce((acc, mov) => {
-      if (!mov.operacion) {
-        return acc;
-      }
+  const movimientosTotales = await this.prisma.movimientoCliente.findMany({
+    where: {
+      clienteId: id,
+    },
+    select: {
+      debitoCop: true,
+      creditoCop: true,
+    },
+  });
 
-      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
-        mov.operacion.tipo,
-      );
+  const totalDebitosGlobalCop = movimientosTotales.reduce(
+    (acc, mov) => acc + Number(mov.debitoCop),
+    0,
+  );
 
-      if (!generaUtilidadReal) {
-        return acc;
-      }
+  const totalCreditosGlobalCop = movimientosTotales.reduce(
+    (acc, mov) => acc + Number(mov.creditoCop),
+    0,
+  );
 
-      return acc + Number(mov.operacion.utilidadCop ?? 0);
-    }, 0);
+  const saldoTotalCop = totalDebitosGlobalCop - totalCreditosGlobalCop;
 
-    const utilidadPorDiaMap = new Map<string, number>();
-
-    for (const mov of movimientos) {
-      if (!mov.operacion) {
-        continue;
-      }
-
-      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
-        mov.operacion.tipo,
-      );
-
-      if (!generaUtilidadReal) {
-        continue;
-      }
-
-      const fecha = mov.creadoEn.toISOString().slice(0, 10);
-      const utilidadCop = Number(mov.operacion.utilidadCop ?? 0);
-
-      utilidadPorDiaMap.set(
-        fecha,
-        (utilidadPorDiaMap.get(fecha) ?? 0) + utilidadCop,
-      );
+  const totalUtilidadRealCop = movimientos.reduce((acc, mov) => {
+    if (!mov.operacion) {
+      return acc;
     }
 
-    const utilidadPorDia = Array.from(utilidadPorDiaMap.entries())
-      .map(([fecha, utilidadCop]) => ({
-        fecha,
-        utilidadCop,
-      }))
-      .sort((a, b) => a.fecha.localeCompare(b.fecha));
-
-    /**
-     * Saldo acumulado del período filtrado.
-     * Ojo: este acumulado empieza en 0 dentro del filtro.
-     * El saldo real total se devuelve aparte como saldoTotalCop.
-     */
-    const movimientosOrdenadosAsc = [...movimientos].sort(
-      (a, b) => a.creadoEn.getTime() - b.creadoEn.getTime(),
+    const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+      mov.operacion.tipo,
     );
 
-    let saldoAcumuladoCop = 0;
+    if (!generaUtilidadReal) {
+      return acc;
+    }
 
-    const movimientosConSaldo = movimientosOrdenadosAsc.map((mov) => {
-      const debitoCop = Number(mov.debitoCop);
-      const creditoCop = Number(mov.creditoCop);
+    return acc + Number(mov.operacion.utilidadCop ?? 0);
+  }, 0);
 
-      saldoAcumuladoCop += debitoCop - creditoCop;
+  const utilidadPorDiaMap = new Map<string, number>();
 
-      const utilidadRealCop =
-        mov.operacion && this.operacionGeneraUtilidadReal(mov.operacion.tipo)
-          ? Number(mov.operacion.utilidadCop ?? 0)
-          : 0;
+  for (const mov of movimientos) {
+    if (!mov.operacion) {
+      continue;
+    }
 
-      return {
-        ...mov,
-        utilidadRealCop,
-        saldoAcumuladoCop,
-      };
-    });
-
-    const movimientosRespuesta = movimientosConSaldo.sort(
-      (a, b) => b.creadoEn.getTime() - a.creadoEn.getTime(),
+    const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+      mov.operacion.tipo,
     );
+
+    if (!generaUtilidadReal) {
+      continue;
+    }
+
+    const fecha = mov.creadoEn.toISOString().slice(0, 10);
+    const utilidadCop = Number(mov.operacion.utilidadCop ?? 0);
+
+    utilidadPorDiaMap.set(
+      fecha,
+      (utilidadPorDiaMap.get(fecha) ?? 0) + utilidadCop,
+    );
+  }
+
+  const utilidadPorDia = Array.from(utilidadPorDiaMap.entries())
+    .map(([fecha, utilidadCop]) => ({
+      fecha,
+      utilidadCop,
+    }))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  const movimientosOrdenadosAsc = [...movimientos].sort(
+    (a, b) => a.creadoEn.getTime() - b.creadoEn.getTime(),
+  );
+
+  let saldoAcumuladoCop = 0;
+
+  const movimientosConSaldo = movimientosOrdenadosAsc.map((mov) => {
+    const debitoCop = Number(mov.debitoCop);
+    const creditoCop = Number(mov.creditoCop);
+
+    saldoAcumuladoCop += debitoCop - creditoCop;
+
+    const utilidadRealCop =
+      mov.operacion && this.operacionGeneraUtilidadReal(mov.operacion.tipo)
+        ? Number(mov.operacion.utilidadCop ?? 0)
+        : 0;
 
     return {
-      cliente,
-      filtros: {
-        desde: filters.desde ?? null,
-        hasta: filters.hasta ?? null,
-        tipo: filters.tipo ?? null,
-        moneda: filters.moneda ?? null,
-      },
-      resumen: {
-        /**
-         * Totales del período filtrado
-         */
-        totalDebitosCop,
-        totalCreditosCop,
-        saldoFiltradoCop,
-        estado: this.obtenerEstadoBalance(saldoFiltradoCop),
-
-        /**
-         * Totales históricos reales del cliente
-         */
-        totalDebitosGlobalCop,
-        totalCreditosGlobalCop,
-        saldoTotalCop,
-        estadoTotal: this.obtenerEstadoBalance(saldoTotalCop),
-
-        /**
-         * Utilidad real del período filtrado
-         */
-        totalUtilidadRealCop,
-        utilidadPorDia,
-      },
-      movimientos: movimientosRespuesta,
+      ...mov,
+      utilidadRealCop,
+      saldoAcumuladoCop,
     };
-  }
+  });
+
+  const movimientosRespuesta = movimientosConSaldo.sort(
+    (a, b) => b.creadoEn.getTime() - a.creadoEn.getTime(),
+  );
+
+  return {
+    cliente,
+    filtros: {
+      desde: filters.desde ?? null,
+      hasta: filters.hasta ?? null,
+      tipo: filters.tipo ?? null,
+      estado: filters.estado ?? null,
+      tipoMov: filters.tipoMov ?? null,
+      moneda: filters.moneda ?? null,
+    },
+    resumen: {
+      totalDebitosCop,
+      totalCreditosCop,
+      saldoFiltradoCop,
+      estado: this.obtenerEstadoBalance(saldoFiltradoCop),
+
+      totalDebitosGlobalCop,
+      totalCreditosGlobalCop,
+      saldoTotalCop,
+      estadoTotal: this.obtenerEstadoBalance(saldoTotalCop),
+
+      totalUtilidadRealCop,
+      utilidadPorDia,
+    },
+    movimientos: movimientosRespuesta,
+  };
+}
 
   async getCartera(filters: FilterClientesCarteraDto) {
     const where: Prisma.ClienteWhereInput = {};
@@ -598,19 +607,35 @@ export class ClientesService {
       throw new BadRequestException('El cliente no existe.');
     }
 
-    const totalDebitosCop = cliente.movimientos.reduce(
+    const movimientosBalance = await this.prisma.movimientoCliente.findMany({
+      where: {
+        clienteId: id,
+      },
+      select: {
+        debitoCop: true,
+        creditoCop: true,
+        operacion: {
+          select: {
+            tipo: true,
+            utilidadCop: true,
+          },
+        },
+      },
+    });
+
+    const totalDebitosCop = movimientosBalance.reduce(
       (acc, mov) => acc + Number(mov.debitoCop),
       0,
     );
 
-    const totalCreditosCop = cliente.movimientos.reduce(
+    const totalCreditosCop = movimientosBalance.reduce(
       (acc, mov) => acc + Number(mov.creditoCop),
       0,
     );
 
     const saldoCop = totalDebitosCop - totalCreditosCop;
 
-    const totalUtilidadRealCop = cliente.movimientos.reduce((acc, mov) => {
+    const totalUtilidadRealCop = movimientosBalance.reduce((acc, mov) => {
       if (!mov.operacion) {
         return acc;
       }
@@ -644,12 +669,12 @@ export class ClientesService {
         estado: this.obtenerEstadoBalance(saldoCop),
         totalUtilidadRealCop,
       },
-      ultimosMovimientos: cliente.movimientos,
-      ultimasOperacionesComoDeudor: cliente.operacionesComoDeudor,
-      ultimasOperacionesComoAcreedor: cliente.operacionesComoAcreedor,
-      ultimasEntradasComoDeudor: cliente.entradasComoDeudor,
-      ultimasEntradasComoAcreedor: cliente.entradasComoAcreedor,
-      ultimasSalidasComoAcreedor: cliente.salidasComoAcreedor,
+      // ultimosMovimientos: cliente.movimientos,
+      // ultimasOperacionesComoDeudor: cliente.operacionesComoDeudor,
+      // ultimasOperacionesComoAcreedor: cliente.operacionesComoAcreedor,
+      // ultimasEntradasComoDeudor: cliente.entradasComoDeudor,
+      // ultimasEntradasComoAcreedor: cliente.entradasComoAcreedor,
+      // ultimasSalidasComoAcreedor: cliente.salidasComoAcreedor,
     };
   }
 

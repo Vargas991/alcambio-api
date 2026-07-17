@@ -140,8 +140,7 @@ export class EntradasService {
         moneda: cuenta.moneda,
         saldoAnterior: saldoActual,
         saldoNuevo,
-        descripcion:
-          dto.descripcion ?? `Abono recibido ${entrada.id}`,
+        descripcion: dto.descripcion ?? `Abono recibido ${entrada.id}`,
         referenciaTipo: 'ENTRADA',
         referenciaId: entrada.id,
       },
@@ -156,8 +155,7 @@ export class EntradasService {
         montoTransaccion: dto.montoCop,
         debitoCop: 0,
         creditoCop: dto.montoCop,
-        descripcion:
-          dto.descripcion ?? `Abono a cuenta propia ${entrada.id}`,
+        descripcion: dto.descripcion ?? `Abono a cuenta propia ${entrada.id}`,
       },
     });
 
@@ -169,91 +167,121 @@ export class EntradasService {
     });
   }
 
-  private async crearAbonoDirectoProveedor(
-    tx: Prisma.TransactionClient,
-    dto: CreateEntradaDto,
-  ) {
-    const acreedorId = dto.acreedorId;
+ private async crearAbonoDirectoProveedor(
+  tx: Prisma.TransactionClient,
+  dto: CreateEntradaDto,
+) {
+  const acreedorId = dto.acreedorId;
 
-    if (!acreedorId) {
-      throw new BadRequestException(
-        'El abono directo requiere acreedorId.',
-      );
-    }
+  if (!acreedorId) {
+    throw new BadRequestException('El abono directo requiere acreedorId.');
+  }
 
-    if (dto.deudorId === acreedorId) {
-      throw new BadRequestException(
-        'El deudor y el acreedor no pueden ser la misma persona.',
-      );
-    }
+  if (dto.deudorId === acreedorId) {
+    throw new BadRequestException(
+      'El deudor y el acreedor no pueden ser la misma persona.',
+    );
+  }
 
-    const deudor = await tx.cliente.findUnique({
-      where: {
-        id: dto.deudorId,
-      },
-    });
+  const deudor = await tx.cliente.findUnique({
+    where: {
+      id: dto.deudorId,
+    },
+  });
 
-    if (!deudor) {
-      throw new NotFoundException('El deudor no existe.');
-    }
+  if (!deudor) {
+    throw new NotFoundException('El deudor no existe.');
+  }
 
-    const acreedor = await tx.cliente.findUnique({
-      where: {
-        id: acreedorId,
-      },
-    });
+  const acreedor = await tx.cliente.findUnique({
+    where: {
+      id: acreedorId,
+    },
+  });
 
-    if (!acreedor) {
-      throw new NotFoundException('El acreedor no existe.');
-    }
+  if (!acreedor) {
+    throw new NotFoundException('El acreedor no existe.');
+  }
 
-    const entrada = await tx.entrada.create({
-      data: {
-        tipo: TipoEntrada.ABONO_DIRECTO_PROVEEDOR,
-        deudorId: dto.deudorId,
-        acreedorId,
-        cuentaId: null,
-        montoCop: dto.montoCop,
-        descripcion: dto.descripcion,
-        referencia: dto.referencia,
-        notas: dto.notas,
-      },
-    });
+  const calculoAbono = this.calcularAbonoDirectoProveedor({
+    montoCop: dto.montoCop,
+    proveedorCobra4x1000: dto.proveedorCobra4x1000,
+  });
 
-    await tx.movimientoCliente.create({
-      data: {
-        clienteId: dto.deudorId,
-        tipo: TipoMovimientoCliente.ABONO_DIRECTO,
-        entradaId: entrada.id,
-        monedaTransaccion: 'COP',
-        montoTransaccion: dto.montoCop,
-        debitoCop: 0,
-        creditoCop: dto.montoCop,
-        descripcion:
-          dto.descripcion ?? `Abono directo del deudor ${entrada.id}`,
-      },
-    });
+  const entrada = await tx.entrada.create({
+    data: {
+      tipo: TipoEntrada.ABONO_DIRECTO_PROVEEDOR,
+      deudorId: dto.deudorId,
+      acreedorId,
+      cuentaId: null,
+      montoCop: calculoAbono.montoCop,
+      proveedorCobra4x1000: calculoAbono.proveedorCobra4x1000,
+      impuestoProveedor4x1000Cop: calculoAbono.impuestoProveedor4x1000Cop,
+      montoNetoAcreedorCop: calculoAbono.montoNetoAcreedorCop,
+      descripcion: dto.descripcion,
+      referencia: dto.referencia,
+      notas: dto.notas,
+    },
+  });
 
-    await tx.movimientoCliente.create({
-      data: {
-        clienteId: acreedorId,
-        tipo: TipoMovimientoCliente.ABONO_DIRECTO,
-        entradaId: entrada.id,
-        monedaTransaccion: 'COP',
-        montoTransaccion: dto.montoCop,
-        debitoCop: dto.montoCop,
-        creditoCop: 0,
-        descripcion:
-          dto.descripcion ?? `Abono directo al acreedor ${entrada.id}`,
-      },
-    });
+  await tx.movimientoCliente.create({
+    data: {
+      clienteId: dto.deudorId,
+      tipo: TipoMovimientoCliente.ABONO_DIRECTO,
+      entradaId: entrada.id,
+      monedaTransaccion: 'COP',
+      montoTransaccion: calculoAbono.montoCop,
+      debitoCop: 0,
+      creditoCop: calculoAbono.montoCop,
+      descripcion:
+        dto.descripcion ?? `Abono directo del deudor ${entrada.id}`,
+    },
+  });
 
-    return tx.entrada.findUnique({
-      where: {
-        id: entrada.id,
-      },
-      include: this.entradaInclude(),
-    });
+  await tx.movimientoCliente.create({
+    data: {
+      clienteId: acreedorId,
+      tipo: TipoMovimientoCliente.ABONO_DIRECTO,
+      entradaId: entrada.id,
+      monedaTransaccion: 'COP',
+      montoTransaccion: calculoAbono.montoNetoAcreedorCop,
+      debitoCop: calculoAbono.montoNetoAcreedorCop,
+      creditoCop: 0,
+      descripcion:
+        dto.descripcion ?? `Abono directo al acreedor ${entrada.id}`,
+    },
+  });
+
+  return tx.entrada.findUnique({
+    where: {
+      id: entrada.id,
+    },
+    include: this.entradaInclude(),
+  });
+}
+
+  private redondearDosDecimales(valor: number) {
+    return Math.round((valor + Number.EPSILON) * 100) / 100;
+  }
+
+  private calcularAbonoDirectoProveedor(params: {
+    montoCop: number;
+    proveedorCobra4x1000?: boolean;
+  }) {
+    const impuestoProveedor4x1000Cop = params.proveedorCobra4x1000
+      ? this.redondearDosDecimales(params.montoCop * 0.004)
+      : 0;
+
+    const montoNetoAcreedorCop = this.redondearDosDecimales(
+      params.montoCop - impuestoProveedor4x1000Cop,
+    );
+
+    return {
+      montoCop: params.montoCop,
+      proveedorCobra4x1000: params.proveedorCobra4x1000 ?? false,
+      impuestoProveedor4x1000Cop,
+      montoNetoAcreedorCop,
+    };
   }
 
   private validarDtoPorTipo(dto: CreateEntradaDto) {
@@ -262,9 +290,7 @@ export class EntradasService {
     }
 
     if (!dto.montoCop || dto.montoCop <= 0) {
-      throw new BadRequestException(
-        'La entrada requiere montoCop mayor a 0.',
-      );
+      throw new BadRequestException('La entrada requiere montoCop mayor a 0.');
     }
 
     if (dto.tipo === TipoEntrada.ABONO_CUENTA_PROPIA) {
@@ -279,9 +305,7 @@ export class EntradasService {
 
     if (dto.tipo === TipoEntrada.ABONO_DIRECTO_PROVEEDOR) {
       if (!dto.acreedorId) {
-        throw new BadRequestException(
-          'El abono directo requiere acreedorId.',
-        );
+        throw new BadRequestException('El abono directo requiere acreedorId.');
       }
 
       return;
@@ -326,176 +350,173 @@ export class EntradasService {
     };
   }
 
- private async cancelarAbonoDirectoProveedor(
-  tx: Prisma.TransactionClient,
-  entrada: {
-    id: string;
-    movimientosCliente: Array<{
-      clienteId: string;
-      tipo: TipoMovimientoCliente;
-      monedaTransaccion: Moneda | null;
-      montoTransaccion: Prisma.Decimal | null;
-      debitoCop: Prisma.Decimal;
-      creditoCop: Prisma.Decimal;
-    }>;
-  },
-  dto: CancelarEntradaDto,
-) {
-  for (const movimiento of entrada.movimientosCliente) {
-    await tx.movimientoCliente.create({
-      data: {
-        clienteId: movimiento.clienteId,
-        tipo: TipoMovimientoCliente.CANCELACION,
-        entradaId: entrada.id,
-        monedaTransaccion: movimiento.monedaTransaccion,
-        montoTransaccion: movimiento.montoTransaccion,
+  private async cancelarAbonoDirectoProveedor(
+    tx: Prisma.TransactionClient,
+    entrada: {
+      id: string;
+      movimientosCliente: Array<{
+        clienteId: string;
+        tipo: TipoMovimientoCliente;
+        monedaTransaccion: Moneda | null;
+        montoTransaccion: Prisma.Decimal | null;
+        debitoCop: Prisma.Decimal;
+        creditoCop: Prisma.Decimal;
+      }>;
+    },
+    dto: CancelarEntradaDto,
+  ) {
+    for (const movimiento of entrada.movimientosCliente) {
+      await tx.movimientoCliente.create({
+        data: {
+          clienteId: movimiento.clienteId,
+          tipo: TipoMovimientoCliente.CANCELACION,
+          entradaId: entrada.id,
+          monedaTransaccion: movimiento.monedaTransaccion,
+          montoTransaccion: movimiento.montoTransaccion,
 
-        // reversa contable
-        debitoCop: Number(movimiento.creditoCop),
-        creditoCop: Number(movimiento.debitoCop),
+          // reversa contable
+          debitoCop: Number(movimiento.creditoCop),
+          creditoCop: Number(movimiento.debitoCop),
 
-        descripcion: `Cancelación de entrada ${entrada.id}: ${dto.motivo}`,
+          descripcion: `Cancelación de entrada ${entrada.id}: ${dto.motivo}`,
+        },
+      });
+    }
+  }
+
+  private async cancelarAbonoCuentaPropia(
+    tx: Prisma.TransactionClient,
+    entrada: {
+      id: string;
+      cuentaId: string | null;
+      montoCop: Prisma.Decimal;
+      notas: string | null;
+      movimientosCliente: Array<{
+        clienteId: string;
+        tipo: TipoMovimientoCliente;
+        monedaTransaccion: Moneda | null;
+        montoTransaccion: Prisma.Decimal | null;
+        debitoCop: Prisma.Decimal;
+        creditoCop: Prisma.Decimal;
+      }>;
+    },
+    dto: CancelarEntradaDto,
+  ) {
+    if (!entrada.cuentaId) {
+      throw new BadRequestException(
+        'La entrada no tiene una cuenta asociada para reversar.',
+      );
+    }
+
+    const cuenta = await tx.cuenta.findUnique({
+      where: {
+        id: entrada.cuentaId,
       },
     });
-  }
-}
 
-private async cancelarAbonoCuentaPropia(
-  tx: Prisma.TransactionClient,
-  entrada: {
-    id: string;
-    cuentaId: string | null;
-    montoCop: Prisma.Decimal;
-    notas: string | null;
-    movimientosCliente: Array<{
-      clienteId: string;
-      tipo: TipoMovimientoCliente;
-      monedaTransaccion: Moneda | null;
-      montoTransaccion: Prisma.Decimal | null;
-      debitoCop: Prisma.Decimal;
-      creditoCop: Prisma.Decimal;
-    }>;
-  },
-  dto: CancelarEntradaDto,
-) {
-  if (!entrada.cuentaId) {
-    throw new BadRequestException(
-      'La entrada no tiene una cuenta asociada para reversar.',
-    );
-  }
+    if (!cuenta) {
+      throw new NotFoundException('La cuenta asociada a la entrada no existe.');
+    }
 
-  const cuenta = await tx.cuenta.findUnique({
-    where: {
-      id: entrada.cuentaId,
-    },
-  });
+    const saldoActual = Number(cuenta.saldo);
+    const montoEntrada = Number(entrada.montoCop);
 
-  if (!cuenta) {
-    throw new NotFoundException('La cuenta asociada a la entrada no existe.');
-  }
+    if (saldoActual < montoEntrada) {
+      throw new BadRequestException(
+        'La cuenta no tiene saldo suficiente para cancelar esta entrada.',
+      );
+    }
 
-  const saldoActual = Number(cuenta.saldo);
-  const montoEntrada = Number(entrada.montoCop);
+    const saldoNuevo = saldoActual - montoEntrada;
 
-  if (saldoActual < montoEntrada) {
-    throw new BadRequestException(
-      'La cuenta no tiene saldo suficiente para cancelar esta entrada.',
-    );
-  }
-
-  const saldoNuevo = saldoActual - montoEntrada;
-
-  await tx.cuenta.update({
-    where: {
-      id: cuenta.id,
-    },
-    data: {
-      saldo: saldoNuevo,
-    },
-  });
-
-  await tx.movimientoCuenta.create({
-    data: {
-      cuentaId: cuenta.id,
-      tipo: TipoMovimientoCuenta.AJUSTE_SALIDA,
-      monto: montoEntrada,
-      moneda: cuenta.moneda,
-      saldoAnterior: saldoActual,
-      saldoNuevo,
-      descripcion: `Cancelación de entrada ${entrada.id}: ${dto.motivo}`,
-      referenciaTipo: 'CANCELACION_ENTRADA',
-      referenciaId: entrada.id,
-    },
-  });
-
-  for (const movimiento of entrada.movimientosCliente) {
-    await tx.movimientoCliente.create({
+    await tx.cuenta.update({
+      where: {
+        id: cuenta.id,
+      },
       data: {
-        clienteId: movimiento.clienteId,
-        tipo: TipoMovimientoCliente.CANCELACION,
-        entradaId: entrada.id,
-        monedaTransaccion: movimiento.monedaTransaccion,
-        montoTransaccion: movimiento.montoTransaccion,
-
-        // reversa contable
-        debitoCop: Number(movimiento.creditoCop),
-        creditoCop: Number(movimiento.debitoCop),
-
-        descripcion: `Cancelación de entrada ${entrada.id}: ${dto.motivo}`,
+        saldo: saldoNuevo,
       },
     });
+
+    await tx.movimientoCuenta.create({
+      data: {
+        cuentaId: cuenta.id,
+        tipo: TipoMovimientoCuenta.AJUSTE_SALIDA,
+        monto: montoEntrada,
+        moneda: cuenta.moneda,
+        saldoAnterior: saldoActual,
+        saldoNuevo,
+        descripcion: `Cancelación de entrada ${entrada.id}: ${dto.motivo}`,
+        referenciaTipo: 'CANCELACION_ENTRADA',
+        referenciaId: entrada.id,
+      },
+    });
+
+    for (const movimiento of entrada.movimientosCliente) {
+      await tx.movimientoCliente.create({
+        data: {
+          clienteId: movimiento.clienteId,
+          tipo: TipoMovimientoCliente.CANCELACION,
+          entradaId: entrada.id,
+          monedaTransaccion: movimiento.monedaTransaccion,
+          montoTransaccion: movimiento.montoTransaccion,
+
+          // reversa contable
+          debitoCop: Number(movimiento.creditoCop),
+          creditoCop: Number(movimiento.debitoCop),
+
+          descripcion: `Cancelación de entrada ${entrada.id}: ${dto.motivo}`,
+        },
+      });
+    }
   }
-}
-
-
 
   async cancelar(id: string, dto: CancelarEntradaDto) {
-  const entrada = await this.prisma.entrada.findUnique({
-    where: {
-      id,
-    },
-    include: {
-      cuenta: true,
-      movimientosCliente: true,
-    },
-  });
-
-  if (!entrada) {
-    throw new NotFoundException('La entrada no existe.');
-  }
-
-  if (entrada.estado === EstadoEntrada.CANCELADA) {
-    throw new BadRequestException('La entrada ya está cancelada.');
-  }
-
-  return this.prisma.$transaction(async (tx) => {
-    if (entrada.tipo === TipoEntrada.ABONO_CUENTA_PROPIA) {
-      await this.cancelarAbonoCuentaPropia(tx, entrada, dto);
-    }
-
-    if (entrada.tipo === TipoEntrada.ABONO_DIRECTO_PROVEEDOR) {
-      await this.cancelarAbonoDirectoProveedor(tx, entrada, dto);
-    }
-
-    await tx.entrada.update({
+    const entrada = await this.prisma.entrada.findUnique({
       where: {
-        id: entrada.id,
+        id,
       },
-      data: {
-        estado: EstadoEntrada.CANCELADA,
-        notas: entrada.notas
-          ? `${entrada.notas}\nCancelada: ${dto.motivo}`
-          : `Cancelada: ${dto.motivo}`,
+      include: {
+        cuenta: true,
+        movimientosCliente: true,
       },
     });
 
-    return tx.entrada.findUnique({
-      where: {
-        id: entrada.id,
-      },
-      include: this.entradaInclude(),
-    });
-  });
-}
+    if (!entrada) {
+      throw new NotFoundException('La entrada no existe.');
+    }
 
+    if (entrada.estado === EstadoEntrada.CANCELADA) {
+      throw new BadRequestException('La entrada ya está cancelada.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (entrada.tipo === TipoEntrada.ABONO_CUENTA_PROPIA) {
+        await this.cancelarAbonoCuentaPropia(tx, entrada, dto);
+      }
+
+      if (entrada.tipo === TipoEntrada.ABONO_DIRECTO_PROVEEDOR) {
+        await this.cancelarAbonoDirectoProveedor(tx, entrada, dto);
+      }
+
+      await tx.entrada.update({
+        where: {
+          id: entrada.id,
+        },
+        data: {
+          estado: EstadoEntrada.CANCELADA,
+          notas: entrada.notas
+            ? `${entrada.notas}\nCancelada: ${dto.motivo}`
+            : `Cancelada: ${dto.motivo}`,
+        },
+      });
+
+      return tx.entrada.findUnique({
+        where: {
+          id: entrada.id,
+        },
+        include: this.entradaInclude(),
+      });
+    });
+  }
 }

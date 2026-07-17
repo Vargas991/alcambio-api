@@ -29,6 +29,10 @@ export class FilterOperacionesDto {
 
   @IsOptional()
   @IsString()
+  clienteId?: string;
+
+  @IsOptional()
+  @IsString()
   cuentaOperativaId?: string;
 
   @IsOptional()

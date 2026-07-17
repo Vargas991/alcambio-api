@@ -1,13 +1,4 @@
-import {
-  IsEnum,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsString,
-  Min,
-  ValidateIf,
-} from 'class-validator';
-
+import { IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
 import { TipoEntrada } from '../../../generated/prisma/client';
 
 export class CreateEntradaDto {
@@ -31,6 +22,10 @@ export class CreateEntradaDto {
   @IsNumber()
   @Min(1)
   montoCop!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  proveedorCobra4x1000?: boolean;
 
   @IsOptional()
   @IsString()

@@ -138,6 +138,7 @@ model Cuenta {
   moneda    Moneda
   categoria CategoriaCuenta
   tipo      TipoCuenta
+  aplica4x1000 Boolean      @default(false)
   saldo     Decimal         @default(0)
   estado    EstadoEntidad   @default(ACTIVO)
   notas     String?
@@ -214,6 +215,10 @@ model Entrada {
   acreedor Cliente? @relation("EntradaAcreedor", fields: [acreedorId], references: [id])
   cuenta   Cuenta?  @relation(fields: [cuentaId], references: [id])
 
+  proveedorCobra4x1000       Boolean  @default(false)
+  impuestoProveedor4x1000Cop Decimal  @default(0) @db.Decimal(18, 2)
+  montoNetoAcreedorCop       Decimal  @default(0) @db.Decimal(18, 2)
+  
   movimientosCliente MovimientoCliente[]
 
   creadoEn      DateTime @default(now())
@@ -235,6 +240,14 @@ model Salida {
   descripcion String?
   referencia  String?
   notas       String?
+
+  montoBaseCop               Decimal @default(0)
+  proveedorCobra4x1000       Boolean @default(false)
+  impuestoProveedor4x1000Cop Decimal @default(0)
+  montoEnviadoCop            Decimal @default(0)
+  cuentaAplica4x1000         Boolean @default(false)
+  impuestoCuenta4x1000Cop    Decimal @default(0)
+  totalDebitadoCop           Decimal @default(0)
 
   estado EstadoSalida @default(REGISTRADA)
 
