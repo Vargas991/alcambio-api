@@ -199,28 +199,28 @@ export class ClienteLedgerPdfService {
   }
 
   private drawResumen(doc: PDFKit.PDFDocument, ledger: LedgerClientePdfData) {
-  const { resumen } = ledger;
+    const { resumen } = ledger;
 
-  const saldoPeriodoTexto = this.getSaldoPeriodoTexto(
-    resumen.saldoFiltradoCop,
-  );
+    const saldoPeriodoTexto = this.getSaldoPeriodoTexto(
+      resumen.saldoFiltradoCop,
+    );
 
-  doc
-    .fontSize(9)
-    .font('Helvetica-Bold')
-    .text('Resumen del período:', 30, doc.y, { continued: true })
-    .font('Helvetica')
-    .text(` Débitos: ${this.money(resumen.totalDebitosCop)} COP`, {
-      continued: true,
-    })
-    .text(`   Abonos: ${this.money(resumen.totalCreditosCop)} COP`, {
-      continued: true,
-    })
-    .font('Helvetica-Bold')
-    .text(`   ${saldoPeriodoTexto}`);
+    doc
+      .fontSize(9)
+      .font('Helvetica-Bold')
+      .text('Resumen del período:', 30, doc.y, { continued: true })
+      .font('Helvetica')
+      .text(` Débitos: ${this.money(resumen.totalDebitosCop)} COP`, {
+        continued: true,
+      })
+      .text(`   Abonos: ${this.money(resumen.totalCreditosCop)} COP`, {
+        continued: true,
+      })
+      .font('Helvetica-Bold')
+      .text(`   ${saldoPeriodoTexto}`);
 
-  doc.moveDown(0.8);
-}
+    doc.moveDown(0.8);
+  }
 
   private drawMovimientos(
     doc: PDFKit.PDFDocument,
@@ -403,110 +403,109 @@ export class ClienteLedgerPdfService {
   }
 
   private drawTotalsRow(
-  doc: PDFKit.PDFDocument,
-  y: number,
-  columns: TableColumn[],
-  totals: {
-    totalMonto: number;
-    totalDebitos: number;
-    totalCreditos: number;
-    saldoPeriodo: number;
-    saldoTotalReal?: number;
-  },
-) {
-  const height = 22;
+    doc: PDFKit.PDFDocument,
+    y: number,
+    columns: TableColumn[],
+    totals: {
+      totalMonto: number;
+      totalDebitos: number;
+      totalCreditos: number;
+      saldoPeriodo: number;
+      saldoTotalReal?: number;
+    },
+  ) {
+    const height = 22;
 
-  const labelX = columns[0].x;
-  const labelWidth =
-    columns[0].width + columns[1].width + columns[2].width;
+    const labelX = columns[0].x;
+    const labelWidth = columns[0].width + columns[1].width + columns[2].width;
 
-  const drawMergedLabelCell = (
-    yPosition: number,
-    label: string,
-    backgroundColor: string,
-  ) => {
-    doc
-      .save()
-      .fillColor(backgroundColor)
-      .rect(labelX, yPosition, labelWidth, height)
-      .fill()
-      .restore();
+    const drawMergedLabelCell = (
+      yPosition: number,
+      label: string,
+      backgroundColor: string,
+    ) => {
+      doc
+        .save()
+        .fillColor(backgroundColor)
+        .rect(labelX, yPosition, labelWidth, height)
+        .fill()
+        .restore();
 
-    doc.rect(labelX, yPosition, labelWidth, height).stroke();
+      doc.rect(labelX, yPosition, labelWidth, height).stroke();
 
-    doc
-      .fontSize(7.5)
-      .font('Helvetica-Bold')
-      .fillColor('#000000')
-      .text(label, labelX + 4, yPosition + 7, {
-        width: labelWidth - 8,
-        align: 'left',
-      });
-  };
+      doc
+        .fontSize(7.5)
+        .font('Helvetica-Bold')
+        .fillColor('#000000')
+        .text(label, labelX + 4, yPosition + 7, {
+          width: labelWidth - 8,
+          align: 'left',
+        });
+    };
 
-  const drawCell = (
-    columnIndex: number,
-    yPosition: number,
-    value: string,
-    backgroundColor: string,
-  ) => {
-    const column = columns[columnIndex];
+    const drawCell = (
+      columnIndex: number,
+      yPosition: number,
+      value: string,
+      backgroundColor: string,
+    ) => {
+      const column = columns[columnIndex];
 
-    doc
-      .save()
-      .fillColor(backgroundColor)
-      .rect(column.x, yPosition, column.width, height)
-      .fill()
-      .restore();
+      doc
+        .save()
+        .fillColor(backgroundColor)
+        .rect(column.x, yPosition, column.width, height)
+        .fill()
+        .restore();
 
-    doc.rect(column.x, yPosition, column.width, height).stroke();
+      doc.rect(column.x, yPosition, column.width, height).stroke();
 
-    doc
-      .fontSize(7.5)
-      .font('Helvetica-Bold')
-      .fillColor('#000000')
-      .text(value, column.x + 3, yPosition + 7, {
-        width: column.width - 6,
-        align: column.align,
-      });
-  };
+      doc
+        .fontSize(7.5)
+        .font('Helvetica-Bold')
+        .fillColor('#000000')
+        .text(value, column.x + 3, yPosition + 7, {
+          width: column.width - 6,
+          align: column.align,
+        });
+    };
 
-  /**
-   * Fila 1: Totales del período
-   */
-  drawMergedLabelCell(y, 'TOTALES DEL PERÍODO', '#F3F4F6');
+    /**
+     * Fila 1: Totales del período
+     */
+    drawMergedLabelCell(y, 'TOTALES DEL PERÍODO', '#F3F4F6');
 
-  drawCell(3, y, this.money(totals.totalMonto), '#F3F4F6');
-  drawCell(4, y, '', '#F3F4F6');
-  drawCell(5, y, this.money(totals.totalDebitos), '#F3F4F6');
-  drawCell(6, y, this.money(totals.totalCreditos), '#F3F4F6');
-  drawCell(7, y, this.money(totals.saldoPeriodo), '#F3F4F6');
+    drawCell(3, y, this.money(totals.totalMonto), '#F3F4F6');
+    drawCell(4, y, '', '#F3F4F6');
+    drawCell(5, y, this.money(totals.totalDebitos), '#F3F4F6');
+    drawCell(6, y, this.money(totals.totalCreditos), '#F3F4F6');
+    drawCell(7, y, this.money(totals.saldoPeriodo), '#F3F4F6');
 
-  /**
-   * Fila 2: Saldo total real
-   */
-  const saldoTotalReal =
-    totals.saldoTotalReal === undefined
-      ? totals.saldoPeriodo
-      : totals.saldoTotalReal;
+    /**
+     * Fila 2: Saldo total real
+     */
+    const saldoTotalReal =
+      totals.saldoTotalReal === undefined
+        ? totals.saldoPeriodo
+        : totals.saldoTotalReal;
 
-  const ySaldoReal = y + height;
+    const ySaldoReal = y + height;
 
-  drawMergedLabelCell(ySaldoReal, 'SALDO TOTAL REAL', '#E5E7EB');
+    drawMergedLabelCell(ySaldoReal, 'SALDO TOTAL REAL', '#E5E7EB');
 
-  drawCell(3, ySaldoReal, '', '#E5E7EB');
-  drawCell(4, ySaldoReal, '', '#E5E7EB');
-  drawCell(5, ySaldoReal, '', '#E5E7EB');
-  drawCell(6, ySaldoReal, '', '#E5E7EB');
-  drawCell(
-    7,
-    ySaldoReal,
-    this.money(saldoTotalReal),
-    this.getSaldoColor(saldoTotalReal),
-  );
+    drawCell(3, ySaldoReal, '', '#E5E7EB');
+    drawCell(4, ySaldoReal, '', '#E5E7EB');
+    drawCell(5, ySaldoReal, '', '#E5E7EB');
+    drawCell(6, ySaldoReal, '', '#E5E7EB');
+    drawCell(
+      7,
+      ySaldoReal,
+      this.money(saldoTotalReal),
+      this.getSaldoColor(saldoTotalReal),
+    );
 
-  doc.fillColor('#000000');
-}
+    doc.fillColor('#000000');
+  }
 
   private drawFooter(doc: PDFKit.PDFDocument) {
     const range = doc.bufferedPageRange();
@@ -567,7 +566,6 @@ export class ClienteLedgerPdfService {
 
       return mov.entrada.tipo;
     }
-
 
     if (mov.salida) {
       if (mov.salida.tipo === 'PAGO_ACREEDOR') {
@@ -679,34 +677,56 @@ export class ClienteLedgerPdfService {
     return this.unirConceptoConNotas(mov.descripcion ?? mov.tipo, null);
   }
 
+  private formatTasa(value: unknown) {
+    if (value === null || value === undefined || value === '') {
+      return '-';
+    }
+
+    const numberValue = Number(value);
+
+    if (!Number.isFinite(numberValue)) {
+      return '-';
+    }
+
+    return this.decimal(numberValue);
+  }
+
   private getTasaVisible(mov: LedgerClientePdfData['movimientos'][number]) {
     if (!mov.operacion) {
       return '-';
     }
 
-    if (
-      mov.operacion.tipo === 'VENTA' ||
-      mov.operacion.tipo === 'OPERACION_DIRECTA'
-    ) {
-      if (
-        mov.operacion.tasaVenta === null ||
-        mov.operacion.tasaVenta === undefined
-      ) {
-        return '-';
-      }
+    const tipoOperacion = mov.operacion.tipo;
+    const debito = Number(mov.debitoCop ?? 0);
+    const credito = Number(mov.creditoCop ?? 0);
 
-      return this.decimal(Number(mov.operacion.tasaVenta));
+    if (tipoOperacion === 'VENTA') {
+      return this.formatTasa(mov.operacion.tasaVenta);
     }
 
-    if (mov.operacion.tipo === 'COMPRA') {
-      if (
-        mov.operacion.tasaCompra === null ||
-        mov.operacion.tasaCompra === undefined
-      ) {
-        return '-';
+    if (tipoOperacion === 'COMPRA') {
+      return this.formatTasa(mov.operacion.tasaCompra);
+    }
+
+    if (tipoOperacion === 'OPERACION_DIRECTA') {
+      /**
+       * En operación directa:
+       *
+       * - Si el movimiento está en Debe COP, el cliente es deudor.
+       *   Se muestra tasaVenta.
+       *
+       * - Si el movimiento está en Abono COP, el cliente es acreedor.
+       *   Se muestra tasaCompra.
+       */
+      if (debito > 0) {
+        return this.formatTasa(mov.operacion.tasaVenta);
       }
 
-      return this.decimal(Number(mov.operacion.tasaCompra));
+      if (credito > 0) {
+        return this.formatTasa(mov.operacion.tasaCompra);
+      }
+
+      return '-';
     }
 
     return '-';
