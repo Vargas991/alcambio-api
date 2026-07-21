@@ -279,7 +279,7 @@ export class ClienteLedgerPdfService {
         tipo: tipoVisual,
         concepto: this.getConceptoCliente(mov),
         // moneda: mov.monedaTransaccion ?? '-',
-        monto: this.money(monto),
+        monto: `${mov.monedaTransaccion} ${this.money(monto)}`,
         tasa: this.getTasaVisible(mov),
         debito: this.money(debito),
         credito: this.money(credito),
@@ -475,7 +475,7 @@ export class ClienteLedgerPdfService {
      */
     drawMergedLabelCell(y, 'TOTALES DEL PERÍODO', '#F3F4F6');
 
-    drawCell(3, y, this.money(totals.totalMonto), '#F3F4F6');
+    drawCell(3, y, '-', '#F3F4F6');
     drawCell(4, y, '', '#F3F4F6');
     drawCell(5, y, this.money(totals.totalDebitos), '#F3F4F6');
     drawCell(6, y, this.money(totals.totalCreditos), '#F3F4F6');
