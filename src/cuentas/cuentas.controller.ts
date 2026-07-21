@@ -53,14 +53,26 @@ export class CuentasController {
   @Get('operativas')
   async findOperativas() {
     const data = await this.cuentasService.findOperativas();
-    return successResponse(data, 'Cuentas operativas encontradas correctamente.');
+    return successResponse(
+      data,
+      'Cuentas operativas encontradas correctamente.',
+    );
+  }
+
+  @Get('promedios-compra')
+ async  obtenerPromediosCompraCuentasOperativas() {
+    const data = await this.cuentasService.obtenerPromediosCompraCuentasOperativas();
+    return successResponse(data, "Promedios obtenidos con exito.")
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/movimientos')
   async getMovimientos(@Param('id') id: string) {
     const data = await this.cuentasService.getMovimientos(id);
-    return successResponse(data, 'Movimientos de cuenta encontrados correctamente.');
+    return successResponse(
+      data,
+      'Movimientos de cuenta encontrados correctamente.',
+    );
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
@@ -77,7 +89,10 @@ export class CuentasController {
     @Body() dto: UpdateEstadoCuentaDto,
   ) {
     const data = await this.cuentasService.updateEstado(id, dto);
-    return successResponse(data, 'Estado de la cuenta actualizado correctamente.');
+    return successResponse(
+      data,
+      'Estado de la cuenta actualizado correctamente.',
+    );
   }
 
   @Roles(RolUsuario.ADMIN)
@@ -113,4 +128,12 @@ export class CuentasController {
     const data = await this.cuentasService.update(id, dto);
     return successResponse(data, 'Cuenta actualizada correctamente.');
   }
+
+  @Get(':id/promedio-compra')
+  async obtenerPromedioCompraCuenta(@Param('id') id: string) {
+    const data = await this.cuentasService.obtenerPromedioCompraCuenta(id);
+    return successResponse(data, 'Promedio de Cuenta Operativa');
+  }
+
+  
 }

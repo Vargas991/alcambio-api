@@ -6,7 +6,9 @@ import {
 import {
   CategoriaCuenta,
   EstadoEntidad,
+  EstadoOperacion,
   TipoMovimientoCuenta,
+  TipoOperacion,
 } from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -494,5 +496,202 @@ export class CuentasService {
     }
 
     return cuenta;
+  }
+
+  async obtenerPromedioCompraCuenta(cuentaId: string) {
+    const cuenta = await this.prisma.cuenta.findUnique({
+      where: {
+        id: cuentaId,
+      },
+    });
+
+    if (!cuenta) {
+      throw new NotFoundException('La cuenta no existe.');
+    }
+
+    if (cuenta.categoria !== CategoriaCuenta.OPERATIVA) {
+      return {
+        cuentaId: cuenta.id,
+        cuenta: cuenta.nombre,
+        moneda: cuenta.moneda,
+        saldoActual: Number(cuenta.saldo),
+        saldoCalculado: 0,
+        costoInventarioCop: 0,
+        promedioCompra: 0,
+        tasaMinimaVenta: 0,
+        totalOperacionesAnalizadas: 0,
+        aplica: false,
+        mensaje: 'El promedio de compra solo aplica para cuentas operativas.',
+      };
+    }
+
+    const operaciones = await this.prisma.operacion.findMany({
+      where: {
+        cuentaOperativaId: cuentaId,
+        estado: EstadoOperacion.REGISTRADA,
+        tipo: {
+          in: [TipoOperacion.COMPRA, TipoOperacion.VENTA],
+        },
+      },
+      orderBy: [
+        {
+          fechaOperacion: 'asc',
+        },
+        {
+          creadoEn: 'asc',
+        },
+      ],
+    });
+
+    let saldoDisponible = 0;
+    let costoInventarioCop = 0;
+
+    for (const operacion of operaciones) {
+      const monto = Number(operacion.montoTransaccion);
+      const totalCompraCop = Number(operacion.totalCompraCop);
+
+      if (operacion.tipo === TipoOperacion.COMPRA) {
+        saldoDisponible += monto;
+        costoInventarioCop += totalCompraCop;
+      }
+
+      if (operacion.tipo === TipoOperacion.VENTA) {
+        if (saldoDisponible <= 0) {
+          continue;
+        }
+
+        const promedioActual = costoInventarioCop / saldoDisponible;
+        const montoVendido = Math.min(monto, saldoDisponible);
+        const costoSalida = montoVendido * promedioActual;
+
+        saldoDisponible -= montoVendido;
+        costoInventarioCop -= costoSalida;
+
+        if (saldoDisponible <= 0) {
+          saldoDisponible = 0;
+          costoInventarioCop = 0;
+        }
+      }
+    }
+
+    const promedioCompra =
+      saldoDisponible > 0 ? costoInventarioCop / saldoDisponible : 0;
+
+    return {
+      cuentaId: cuenta.id,
+      cuenta: cuenta.nombre,
+      moneda: cuenta.moneda,
+      saldoActual: Number(cuenta.saldo),
+      saldoCalculado: saldoDisponible,
+      costoInventarioCop: Math.round(costoInventarioCop),
+      promedioCompra,
+      tasaMinimaVenta: promedioCompra,
+      totalOperacionesAnalizadas: operaciones.length,
+      aplica: true,
+    };
+  }
+  private calcularPromedioCompraDeOperaciones(params: {
+    cuenta: {
+      id: string;
+      nombre: string;
+      moneda: string;
+      saldo: unknown;
+    };
+    operaciones: Array<{
+      tipo: TipoOperacion;
+      montoTransaccion: unknown;
+      totalCompraCop: unknown;
+    }>;
+  }) {
+    const { cuenta, operaciones } = params;
+
+    let saldoDisponible = 0;
+    let costoInventarioCop = 0;
+
+    for (const operacion of operaciones) {
+      const monto = Number(operacion.montoTransaccion);
+      const totalCompraCop = Number(operacion.totalCompraCop);
+
+      if (operacion.tipo === TipoOperacion.COMPRA) {
+        saldoDisponible += monto;
+        costoInventarioCop += totalCompraCop;
+      }
+
+      if (operacion.tipo === TipoOperacion.VENTA) {
+        if (saldoDisponible <= 0) {
+          continue;
+        }
+
+        const promedioActual = costoInventarioCop / saldoDisponible;
+        const montoVendido = Math.min(monto, saldoDisponible);
+        const costoSalida = montoVendido * promedioActual;
+
+        saldoDisponible -= montoVendido;
+        costoInventarioCop -= costoSalida;
+
+        if (saldoDisponible <= 0) {
+          saldoDisponible = 0;
+          costoInventarioCop = 0;
+        }
+      }
+    }
+
+    const promedioCompra =
+      saldoDisponible > 0 ? costoInventarioCop / saldoDisponible : 0;
+
+    return {
+      cuentaId: cuenta.id,
+      cuenta: cuenta.nombre,
+      moneda: cuenta.moneda,
+      saldoActual: Number(cuenta.saldo),
+      saldoCalculado: saldoDisponible,
+      costoInventarioCop: Math.round(costoInventarioCop),
+      promedioCompra,
+      tasaMinimaVenta: promedioCompra,
+      totalOperacionesAnalizadas: operaciones.length,
+    };
+  }
+
+  async obtenerPromediosCompraCuentasOperativas() {
+    const cuentasOperativas = await this.prisma.cuenta.findMany({
+      where: {
+        categoria: CategoriaCuenta.OPERATIVA,
+        estado: EstadoEntidad.ACTIVO,
+      },
+      orderBy: {
+        nombre: 'asc',
+      },
+    });
+
+    const operaciones = await this.prisma.operacion.findMany({
+      where: {
+        estado: EstadoOperacion.REGISTRADA,
+        cuentaOperativaId: {
+          in: cuentasOperativas.map((cuenta) => cuenta.id),
+        },
+        tipo: {
+          in: [TipoOperacion.COMPRA, TipoOperacion.VENTA],
+        },
+      },
+      orderBy: [
+        {
+          fechaOperacion: 'asc',
+        },
+        {
+          creadoEn: 'asc',
+        },
+      ],
+    });
+
+    return cuentasOperativas.map((cuenta) => {
+      const operacionesCuenta = operaciones.filter(
+        (operacion) => operacion.cuentaOperativaId === cuenta.id,
+      );
+
+      return this.calcularPromedioCompraDeOperaciones({
+        cuenta,
+        operaciones: operacionesCuenta,
+      });
+    });
   }
 }
