@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -20,6 +22,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
 import { FilterOperacionesDto } from './dto/filter-operaciones.dto';
+import { UpdateOperacionDto } from './dto/update-operacione.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('operaciones')
@@ -47,13 +50,20 @@ export class OperacionesController {
     return successResponse(data, 'Operación encontrada correctamente.');
   }
 
-  @Roles(RolUsuario.ADMIN)
-  @Patch(':id/cancelar')
-  async cancelar(
+  @Put(':id')
+  async editar(
     @Param('id') id: string,
-    @Body() dto: CancelarOperacionDto,
+    @Body() dto: UpdateOperacionDto,
   ) {
-    const data = await this.operacionesService.cancelar(id, dto);
-    return successResponse(data, 'Operación cancelada correctamente.');
+    const data = await this.operacionesService.editar(id, dto);
+    return successResponse(data, "Operacion Editada exitosamente")
   }
+
+  @Roles(RolUsuario.ADMIN)
+  @Delete(':id')
+  eliminar(@Param('id') id: string) {
+  return this.operacionesService.cancelar(id, {
+    motivo: 'Eliminación de operación',
+  });
+}
 }
