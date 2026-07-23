@@ -17,6 +17,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSalidaDto } from './dto/create-salida.dto';
 import { CancelarSalidaDto } from './dto/cancelar-salida.dto';
+import { UpdateSalidaDto } from './dto/update-salida.dto';
 
 @Injectable()
 export class SalidasService {
@@ -373,6 +374,514 @@ export class SalidasService {
       });
     });
   }
+
+  private async reversarSalida(
+  tx: Prisma.TransactionClient,
+  salida: {
+    id: string;
+    tipo: TipoSalida;
+    estado: EstadoSalida;
+    cuentaId: string;
+    montoCop: Prisma.Decimal;
+    totalDebitadoCop: Prisma.Decimal | null;
+  },
+) {
+  const cuenta = await tx.cuenta.findUnique({
+    where: {
+      id: salida.cuentaId,
+    },
+  });
+
+  if (!cuenta) {
+    throw new NotFoundException(
+      'La cuenta asociada a la salida no existe.',
+    );
+  }
+
+  /**
+   * Debemos devolver EXACTAMENTE lo que salió
+   * originalmente de la cuenta.
+   *
+   * Para registros antiguos hacemos fallback
+   * a montoCop.
+   */
+  const montoReversar = Number(
+    salida.totalDebitadoCop ?? salida.montoCop,
+  );
+
+  await tx.cuenta.update({
+    where: {
+      id: cuenta.id,
+    },
+    data: {
+      saldo: {
+        increment: montoReversar,
+      },
+    },
+  });
+
+  /**
+   * Eliminamos cualquier movimiento del cliente
+   * generado por la salida.
+   *
+   * Esto automáticamente revierte el efecto
+   * sobre su balance.
+   */
+  await tx.movimientoCliente.deleteMany({
+    where: {
+      salidaId: salida.id,
+    },
+  });
+
+  /**
+   * Eliminamos el movimiento original de cuenta.
+   */
+  await tx.movimientoCuenta.deleteMany({
+    where: {
+      referenciaTipo: 'SALIDA',
+      referenciaId: salida.id,
+    },
+  });
+}
+
+private async aplicarPagoAcreedorEditado(
+  tx: Prisma.TransactionClient,
+  salidaId: string,
+  dto: UpdateSalidaDto,
+) {
+  const acreedorId = dto.acreedorId;
+
+  if (!acreedorId) {
+    throw new BadRequestException(
+      'El pago a acreedor requiere acreedorId.',
+    );
+  }
+
+  const acreedor = await tx.cliente.findUnique({
+    where: {
+      id: acreedorId,
+    },
+  });
+
+  if (!acreedor) {
+    throw new NotFoundException(
+      'El acreedor no existe.',
+    );
+  }
+
+  const cuenta = await this.validarCuentaParaSalida(
+    tx,
+    dto.cuentaId,
+  );
+
+  /**
+   * Calculamos nuevamente:
+   *
+   * montoBase
+   * + 4x1000 proveedor
+   * = montoEnviado
+   *
+   * montoEnviado
+   * + 4x1000 cuenta
+   * = totalDebitado
+   */
+  const calculo = this.calcularSalidaCon4x1000({
+    montoBaseCop: dto.montoCop,
+    proveedorCobra4x1000:
+      dto.proveedorCobra4x1000 ?? false,
+    cuentaAplica4x1000:
+      cuenta.aplica4x1000,
+  });
+
+  const saldoAnterior = Number(cuenta.saldo);
+
+  if (
+    saldoAnterior <
+    calculo.totalDebitadoCop
+  ) {
+    throw new BadRequestException(
+      'La cuenta no tiene saldo suficiente para registrar esta salida.',
+    );
+  }
+
+  const saldoNuevo =
+    saldoAnterior -
+    calculo.totalDebitadoCop;
+
+  const salida = await tx.salida.update({
+    where: {
+      id: salidaId,
+    },
+    data: {
+      tipo: TipoSalida.PAGO_ACREEDOR,
+
+      acreedorId,
+      cuentaId: cuenta.id,
+
+      /**
+       * Mantener la semántica que ya tienes:
+       * montoCop = lo enviado al acreedor.
+       */
+      montoCop: calculo.montoEnviadoCop,
+
+      montoBaseCop:
+        calculo.montoBaseCop,
+
+      proveedorCobra4x1000:
+        calculo.proveedorCobra4x1000,
+
+      impuestoProveedor4x1000Cop:
+        calculo.impuestoProveedor4x1000Cop,
+
+      montoEnviadoCop:
+        calculo.montoEnviadoCop,
+
+      cuentaAplica4x1000:
+        calculo.cuentaAplica4x1000,
+
+      impuestoCuenta4x1000Cop:
+        calculo.impuestoCuenta4x1000Cop,
+
+      totalDebitadoCop:
+        calculo.totalDebitadoCop,
+
+      descripcion: dto.descripcion,
+      referencia: dto.referencia,
+      notas: dto.notas,
+    },
+  });
+
+  /**
+   * Descontar nuevamente de la cuenta.
+   */
+  await tx.cuenta.update({
+    where: {
+      id: cuenta.id,
+    },
+    data: {
+      saldo: saldoNuevo,
+    },
+  });
+
+  await tx.movimientoCuenta.create({
+    data: {
+      cuentaId: cuenta.id,
+
+      tipo:
+        TipoMovimientoCuenta.SALIDA,
+
+      monto:
+        calculo.totalDebitadoCop,
+
+      moneda: cuenta.moneda,
+
+      saldoAnterior,
+      saldoNuevo,
+
+      descripcion:
+        dto.descripcion ??
+        `Pago a acreedor ${salida.id}`,
+
+      referenciaTipo: 'SALIDA',
+      referenciaId: salida.id,
+    },
+  });
+
+  /**
+   * IMPORTANTE:
+   *
+   * La deuda con el acreedor solamente baja
+   * por montoBaseCop.
+   *
+   * Los impuestos no reducen deuda.
+   */
+  await tx.movimientoCliente.create({
+    data: {
+      clienteId: acreedorId,
+
+      tipo:
+        TipoMovimientoCliente.PAGO,
+
+      salidaId: salida.id,
+
+      monedaTransaccion: 'COP',
+
+      montoTransaccion:
+        calculo.montoBaseCop,
+
+      debitoCop:
+        calculo.montoBaseCop,
+
+      creditoCop: 0,
+
+      descripcion:
+        dto.descripcion ??
+        `Pago a acreedor ${salida.id}`,
+    },
+  });
+
+  return salida;
+}
+
+private async aplicarSalidaSimpleEditada(
+  tx: Prisma.TransactionClient,
+  salidaId: string,
+  dto: UpdateSalidaDto,
+) {
+  const cuenta = await this.validarCuentaParaSalida(
+    tx,
+    dto.cuentaId,
+  );
+
+  const calculo =
+    this.calcularSalidaCon4x1000({
+      montoBaseCop: dto.montoCop,
+
+      /**
+       * GASTO / RETIRO nunca llevan
+       * 4x1000 de proveedor.
+       */
+      proveedorCobra4x1000: false,
+
+      /**
+       * Pero la cuenta sí puede cobrar
+       * automáticamente su propio 4x1000.
+       */
+      cuentaAplica4x1000:
+        cuenta.aplica4x1000,
+    });
+
+  const saldoAnterior =
+    Number(cuenta.saldo);
+
+  if (
+    saldoAnterior <
+    calculo.totalDebitadoCop
+  ) {
+    throw new BadRequestException(
+      'La cuenta no tiene saldo suficiente para registrar esta salida.',
+    );
+  }
+
+  const saldoNuevo =
+    saldoAnterior -
+    calculo.totalDebitadoCop;
+
+  const salida =
+    await tx.salida.update({
+      where: {
+        id: salidaId,
+      },
+      data: {
+        tipo: dto.tipo,
+
+        acreedorId: null,
+        cuentaId: cuenta.id,
+
+        montoCop:
+          calculo.montoBaseCop,
+
+        montoBaseCop:
+          calculo.montoBaseCop,
+
+        /**
+         * Limpiamos cualquier dato que
+         * pudiera venir de un PAGO_ACREEDOR
+         * anterior.
+         */
+        proveedorCobra4x1000: false,
+
+        impuestoProveedor4x1000Cop: 0,
+
+        montoEnviadoCop:
+          calculo.montoEnviadoCop,
+
+        cuentaAplica4x1000:
+          calculo.cuentaAplica4x1000,
+
+        impuestoCuenta4x1000Cop:
+          calculo.impuestoCuenta4x1000Cop,
+
+        totalDebitadoCop:
+          calculo.totalDebitadoCop,
+
+        descripcion:
+          dto.descripcion,
+
+        referencia:
+          dto.referencia,
+
+        notas:
+          dto.notas,
+      },
+    });
+
+  await tx.cuenta.update({
+    where: {
+      id: cuenta.id,
+    },
+    data: {
+      saldo: saldoNuevo,
+    },
+  });
+
+  await tx.movimientoCuenta.create({
+    data: {
+      cuentaId: cuenta.id,
+
+      tipo:
+        dto.tipo ===
+        TipoSalida.GASTO
+          ? TipoMovimientoCuenta.GASTO
+          : TipoMovimientoCuenta.SALIDA,
+
+      monto:
+        calculo.totalDebitadoCop,
+
+      moneda: cuenta.moneda,
+
+      saldoAnterior,
+      saldoNuevo,
+
+      descripcion:
+        dto.descripcion ??
+        `Salida ${salida.id}`,
+
+      referenciaTipo: 'SALIDA',
+      referenciaId: salida.id,
+    },
+  });
+
+  return salida;
+}
+
+async editar(
+  id: string,
+  dto: UpdateSalidaDto,
+) {
+  this.validarDtoPorTipo(dto);
+
+  const salidaActual =
+    await this.prisma.salida.findUnique({
+      where: {
+        id,
+      },
+    });
+
+  if (!salidaActual) {
+    throw new NotFoundException(
+      'La salida no existe.',
+    );
+  }
+
+  if (
+    salidaActual.estado ===
+    EstadoSalida.CANCELADA
+  ) {
+    throw new BadRequestException(
+      'No se puede editar una salida cancelada.',
+    );
+  }
+
+  return this.prisma.$transaction(
+    async (tx) => {
+      /**
+       * 1. Revertir completamente la salida
+       * anterior.
+       */
+      await this.reversarSalida(
+        tx,
+        salidaActual,
+      );
+
+      /**
+       * 2. Aplicar los nuevos datos.
+       */
+      if (
+        dto.tipo ===
+        TipoSalida.PAGO_ACREEDOR
+      ) {
+        await this.aplicarPagoAcreedorEditado(
+          tx,
+          salidaActual.id,
+          dto,
+        );
+      } else if (
+        dto.tipo === TipoSalida.GASTO ||
+        dto.tipo === TipoSalida.RETIRO
+      ) {
+        await this.aplicarSalidaSimpleEditada(
+          tx,
+          salidaActual.id,
+          dto,
+        );
+      } else {
+        throw new BadRequestException(
+          'Tipo de salida no soportado.',
+        );
+      }
+
+      return tx.salida.findUnique({
+        where: {
+          id: salidaActual.id,
+        },
+        include:
+          this.salidaInclude(),
+      });
+    },
+  );
+}
+
+async eliminar(id: string) {
+  const salida =
+    await this.prisma.salida.findUnique({
+      where: {
+        id,
+      },
+    });
+
+  if (!salida) {
+    throw new NotFoundException(
+      'La salida no existe.',
+    );
+  }
+
+  if (
+    salida.estado ===
+    EstadoSalida.CANCELADA
+  ) {
+    throw new BadRequestException(
+      'No se puede eliminar una salida cancelada.',
+    );
+  }
+
+  return this.prisma.$transaction(
+    async (tx) => {
+      /**
+       * 1. Revertir cuenta y ledger.
+       */
+      await this.reversarSalida(
+        tx,
+        salida,
+      );
+
+      /**
+       * 2. Eliminar físicamente.
+       */
+      await tx.salida.delete({
+        where: {
+          id: salida.id,
+        },
+      });
+
+      return {
+        id: salida.id,
+        message:
+          'Salida eliminada correctamente.',
+      };
+    },
+  );
+}
 
   private async validarCuentaParaSalida(
     tx: Prisma.TransactionClient,

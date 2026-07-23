@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 
 import {
   EstadoEntidad,
+  Moneda,
   Prisma,
+  TipoMovimientoCliente,
   TipoOperacion,
 } from '../../generated/prisma/client';
 
@@ -16,6 +18,7 @@ import {
   buildEndOfDayUtcFromLocal,
   buildStartOfDayUtcFromLocal,
 } from 'src/common/helpers/date-range.helper';
+import { AjustarSaldoClienteDto } from './dto/ajustar-saldo-cliente.dto';
 
 @Injectable()
 export class ClientesService {
@@ -513,6 +516,110 @@ async getLedger(id: string, filters: FilterClienteLedgerDto) {
       lesDebo,
     };
   }
+
+  async ajustarSaldo(
+  clienteId: string,
+  dto: AjustarSaldoClienteDto,
+) {
+  const cliente = await this.prisma.cliente.findUnique({
+    where: {
+      id: clienteId,
+    },
+  });
+
+  if (!cliente) {
+    throw new NotFoundException('El cliente no existe.');
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+    /**
+     * 1. Obtener saldo actual desde el ledger.
+     */
+    const totales = await tx.movimientoCliente.aggregate({
+      where: {
+        clienteId,
+      },
+      _sum: {
+        debitoCop: true,
+        creditoCop: true,
+      },
+    });
+
+    const totalDebitos = Number(totales._sum.debitoCop ?? 0);
+    const totalCreditos = Number(totales._sum.creditoCop ?? 0);
+
+    const saldoActualCop = totalDebitos - totalCreditos;
+
+    /**
+     * 2. Calcular cuánto debemos mover para llegar
+     * exactamente al saldo solicitado.
+     */
+    const saldoObjetivoCop = Number(dto.saldoObjetivoCop);
+
+    const diferenciaCop = saldoObjetivoCop - saldoActualCop;
+
+    if (Math.abs(diferenciaCop) < 0.01) {
+      return {
+        clienteId: cliente.id,
+        cliente: cliente.nombre,
+        saldoAnteriorCop: saldoActualCop,
+        saldoNuevoCop: saldoActualCop,
+        ajusteCop: 0,
+        mensaje: 'El cliente ya tiene el saldo indicado.',
+      };
+    }
+
+    /**
+     * saldo = débito - crédito
+     *
+     * diferencia positiva:
+     * necesitamos aumentar saldo → DÉBITO
+     *
+     * diferencia negativa:
+     * necesitamos disminuir saldo → CRÉDITO
+     */
+    const debitoCop = diferenciaCop > 0
+      ? diferenciaCop
+      : 0;
+
+    const creditoCop = diferenciaCop < 0
+      ? Math.abs(diferenciaCop)
+      : 0;
+
+    await tx.movimientoCliente.create({
+      data: {
+        clienteId,
+        tipo: TipoMovimientoCliente.AJUSTE,
+
+        debitoCop,
+        creditoCop,
+
+        monedaTransaccion: Moneda.COP,
+        montoTransaccion: Math.abs(diferenciaCop),
+
+        descripcion: `Ajuste de saldo: ${dto.motivo}`,
+      },
+    });
+
+    return {
+      clienteId: cliente.id,
+      cliente: cliente.nombre,
+
+      saldoAnteriorCop: saldoActualCop,
+      saldoObjetivoCop,
+      saldoNuevoCop: saldoObjetivoCop,
+
+      ajusteCop: Math.abs(diferenciaCop),
+
+      movimiento:
+        diferenciaCop > 0
+          ? 'DEBITO'
+          : 'CREDITO',
+
+      motivo: dto.motivo,
+    };
+  });
+}
 
   async getPerfil(id: string) {
     const cliente = await this.prisma.cliente.findUnique({

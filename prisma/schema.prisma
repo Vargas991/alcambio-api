@@ -215,6 +215,10 @@ model Entrada {
   acreedor Cliente? @relation("EntradaAcreedor", fields: [acreedorId], references: [id])
   cuenta   Cuenta?  @relation(fields: [cuentaId], references: [id])
 
+  aplica4x1000           Boolean  @default(false)
+  impuesto4x1000Cop      Decimal  @default(0) @db.Decimal(18, 2)
+  montoAplicadoDeudaCop  Decimal? @db.Decimal(18, 2)
+
   proveedorCobra4x1000       Boolean  @default(false)
   impuestoProveedor4x1000Cop Decimal  @default(0) @db.Decimal(18, 2)
   montoNetoAcreedorCop       Decimal  @default(0) @db.Decimal(18, 2)

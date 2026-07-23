@@ -1,515 +1,857 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
 import {
   CategoriaCuenta,
-  EstadoEntrada,
-  EstadoOperacion,
-  EstadoSalida,
-  Prisma,
-  TipoEntrada,
-  TipoOperacion,
-  TipoSalida,
+  EstadoEntidad,
 } from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { FilterDashboardDto } from './dto/filter-dashboard.dto';
+import { CuentasService } from '../cuentas/cuentas.service';
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * El negocio trabaja con horario de Venezuela.
+   *
+   * Venezuela actualmente utiliza UTC-04:00.
+   */
+  private readonly timezoneOffset = '-04:00';
 
-  async getResumen(filters: FilterDashboardDto) {
-    const rango = this.obtenerRangoFechas(filters);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cuentasService: CuentasService,
+  ) {}
 
+  /**
+   * ==========================================
+   * DASHBOARD GENERAL
+   * ==========================================
+   *
+   * GET /dashboard/resumen?fecha=2026-07-23
+   *
+   * Si no se envía fecha se toma la fecha
+   * actual de Venezuela.
+   */
+  async obtenerResumen(fecha?: string) {
+    const fechaSeleccionada =
+      fecha ?? this.obtenerFechaActualVenezuela();
+
+    this.validarFecha(fechaSeleccionada);
+
+    const { inicio, fin } =
+      this.obtenerRangoDia(fechaSeleccionada);
+
+    /**
+     * Ejecutamos en paralelo las dos partes
+     * principales del dashboard.
+     */
     const [
-      operaciones,
-      entradas,
-      salidas,
-      cuentas,
-      movimientosCartera,
-      ultimosMovimientos,
+      capital,
+      caja,
     ] = await Promise.all([
-      this.obtenerOperaciones(rango),
-      this.obtenerEntradas(rango),
-      this.obtenerSalidas(rango),
-      this.obtenerCuentas(),
-      this.obtenerMovimientosCartera(),
-      this.obtenerUltimosMovimientos(),
+      this.obtenerCapitalOperativo(),
+      this.obtenerCajaDia(inicio, fin),
     ]);
 
-    const resumenOperaciones = this.calcularResumenOperaciones(operaciones);
-    const resumenEntradas = this.calcularResumenEntradas(entradas);
-    const resumenSalidas = this.calcularResumenSalidas(salidas);
-    const resumenCuentas = this.calcularResumenCuentas(cuentas);
-    const resumenCartera = this.calcularCartera(movimientosCartera);
-
     return {
-      filtros: {
-        desde: rango.desde,
-        hasta: rango.hasta,
-      },
+      fecha: fechaSeleccionada,
 
-      indicadores: {
-        operaciones: resumenOperaciones.cantidad,
-        comprasCop: resumenOperaciones.comprasCop,
-        ventasCop: resumenOperaciones.ventasCop,
-        utilidadRealCop: resumenOperaciones.utilidadRealCop,
+      capital,
 
-        entradasCop: resumenEntradas.totalEntradasCop,
-        pagosAcreedoresCop: resumenSalidas.pagosAcreedoresCop,
-        gastosCop: resumenSalidas.gastosCop,
-        retirosCop: resumenSalidas.retirosCop,
+      caja,
 
-        saldoCuentasCop: resumenCuentas.saldoCuentasCop,
-        porCobrarCop: resumenCartera.porCobrarCop,
-        porPagarCop: resumenCartera.porPagarCop,
-      },
-
-      operaciones: resumenOperaciones,
-      entradas: resumenEntradas,
-      salidas: resumenSalidas,
-      cuentas: resumenCuentas,
-      cartera: resumenCartera,
-
-      ultimosMovimientos,
+      generadoEn: new Date(),
     };
-  }
-
-  private obtenerRangoFechas(filters: FilterDashboardDto) {
-    const desde = filters.desde
-      ? this.crearFechaInicio(filters.desde)
-      : this.inicioDelDia(new Date());
-
-    const hasta = filters.hasta
-      ? this.crearFechaFin(filters.hasta)
-      : this.finDelDia(new Date());
-
-    return {
-      desde,
-      hasta,
-    };
-  }
-
-  private obtenerOperaciones(rango: { desde: Date; hasta: Date }) {
-    return this.prisma.operacion.findMany({
-      where: {
-        estado: EstadoOperacion.REGISTRADA,
-        fechaOperacion: {
-          gte: rango.desde,
-          lte: rango.hasta,
-        },
-      },
-      select: {
-        id: true,
-        tipo: true,
-        totalCompraCop: true,
-        totalVentaCop: true,
-        utilidadCop: true,
-      },
-    });
-  }
-
-  private obtenerEntradas(rango: { desde: Date; hasta: Date }) {
-    return this.prisma.entrada.findMany({
-      where: {
-        estado: EstadoEntrada.REGISTRADA,
-        creadoEn: {
-          gte: rango.desde,
-          lte: rango.hasta,
-        },
-      },
-      select: {
-        id: true,
-        tipo: true,
-        montoCop: true,
-      },
-    });
-  }
-
-  private obtenerSalidas(rango: { desde: Date; hasta: Date }) {
-    return this.prisma.salida.findMany({
-      where: {
-        estado: EstadoSalida.REGISTRADA,
-        creadoEn: {
-          gte: rango.desde,
-          lte: rango.hasta,
-        },
-      },
-      select: {
-        id: true,
-        tipo: true,
-        montoCop: true,
-      },
-    });
-  }
-
-  private obtenerCuentas() {
-    return this.prisma.cuenta.findMany({
-      where: {
-        estado: 'ACTIVO',
-      },
-      select: {
-        id: true,
-        nombre: true,
-        moneda: true,
-        categoria: true,
-        tipo: true,
-        saldo: true,
-      },
-      orderBy: [
-        {
-          categoria: 'asc',
-        },
-        {
-          nombre: 'asc',
-        },
-      ],
-    });
   }
 
   /**
-   * La cartera es un saldo histórico actual.
-   * No debe filtrarse por las fechas del dashboard.
+   * ==========================================
+   * CAPITAL OPERATIVO ACTUAL
+   * ==========================================
+   *
+   * Disponible COP
+   * +
+   * inventario de divisas valorizado
+   * al promedio de compra.
    */
-  private obtenerMovimientosCartera() {
-    return this.prisma.movimientoCliente.findMany({
-      select: {
-        clienteId: true,
-        debitoCop: true,
-        creditoCop: true,
-        cliente: {
-          select: {
-            id: true,
-            nombre: true,
-            documento: true,
-            telefono: true,
-            estado: true,
-          },
+  private async obtenerCapitalOperativo() {
+    /**
+     * Cuentas financieras en COP.
+     *
+     * Ej:
+     * - Caja
+     * - Oficina
+     * - Bancolombia
+     */
+    const cuentasBase =
+      await this.prisma.cuenta.findMany({
+        where: {
+          categoria: CategoriaCuenta.BASE_COP,
+          moneda: 'COP',
+          estado: EstadoEntidad.ACTIVO,
         },
-      },
-    });
-  }
 
-  private obtenerUltimosMovimientos() {
-    return this.prisma.movimientoCliente.findMany({
-      take: 10,
-      orderBy: {
-        creadoEn: 'desc',
-      },
-      include: {
-        cliente: {
-          select: {
-            id: true,
-            nombre: true,
-            documento: true,
-          },
+        orderBy: {
+          nombre: 'asc',
         },
-        operacion: {
-          select: {
-            id: true,
-            codigo: true,
-            nombre: true,
-            tipo: true,
-            estado: true,
-          },
+
+        select: {
+          id: true,
+          nombre: true,
+          moneda: true,
+          categoria: true,
+          tipo: true,
+          saldo: true,
+          aplica4x1000: true,
         },
-        entrada: {
-          select: {
-            id: true,
-            tipo: true,
-            estado: true,
-            descripcion: true,
-            referencia: true,
-          },
-        },
-        salida: {
-          select: {
-            id: true,
-            tipo: true,
-            estado: true,
-            descripcion: true,
-            referencia: true,
-          },
-        },
-      },
-    });
-  }
+      });
 
-  private calcularResumenOperaciones(
-    operaciones: Array<{
-      id: string;
-      tipo: TipoOperacion;
-      totalCompraCop: Prisma.Decimal;
-      totalVentaCop: Prisma.Decimal;
-      utilidadCop: Prisma.Decimal;
-    }>,
-  ) {
-    let comprasCop = 0;
-    let ventasCop = 0;
-    let utilidadRealCop = 0;
+    /**
+     * Reutilizamos el método que YA tienes
+     * en CuentasService.
+     *
+     * No duplicamos el promedio ponderado.
+     */
+    const promedios =
+      await this.cuentasService
+        .obtenerPromediosCompraCuentasOperativas();
 
-    let cantidadCompras = 0;
-    let cantidadVentas = 0;
-    let cantidadDirectas = 0;
+    /**
+     * ======================================
+     * CUENTAS BASE COP
+     * ======================================
+     */
 
-    for (const operacion of operaciones) {
-      if (operacion.tipo === TipoOperacion.COMPRA) {
-        comprasCop += Number(operacion.totalCompraCop);
-        cantidadCompras += 1;
-        continue;
-      }
+    const cuentasBaseResponse =
+      cuentasBase.map((cuenta) => ({
+        id: cuenta.id,
 
-      if (operacion.tipo === TipoOperacion.VENTA) {
-        ventasCop += Number(operacion.totalVentaCop);
-        utilidadRealCop += Number(operacion.utilidadCop);
-        cantidadVentas += 1;
-        continue;
-      }
+        nombre: cuenta.nombre,
 
-      if (operacion.tipo === TipoOperacion.OPERACION_DIRECTA) {
-        ventasCop += Number(operacion.totalVentaCop);
-        utilidadRealCop += Number(operacion.utilidadCop);
-        cantidadDirectas += 1;
-      }
-    }
+        moneda: cuenta.moneda,
 
-    return {
-      cantidad: operaciones.length,
-      cantidadCompras,
-      cantidadVentas,
-      cantidadDirectas,
-      comprasCop,
-      ventasCop,
-      utilidadRealCop,
-    };
-  }
+        tipo: cuenta.tipo,
 
-  private calcularResumenEntradas(
-    entradas: Array<{
-      id: string;
-      tipo: TipoEntrada;
-      montoCop: Prisma.Decimal;
-    }>,
-  ) {
-    let abonosCuentaPropiaCop = 0;
-    let abonosDirectosCop = 0;
+        saldo: Number(cuenta.saldo),
 
-    for (const entrada of entradas) {
-      const montoCop = Number(entrada.montoCop);
+        aplica4x1000:
+          cuenta.aplica4x1000,
+      }));
 
-      if (entrada.tipo === TipoEntrada.ABONO_CUENTA_PROPIA) {
-        abonosCuentaPropiaCop += montoCop;
-        continue;
-      }
-
-      if (entrada.tipo === TipoEntrada.ABONO_DIRECTO_PROVEEDOR) {
-        abonosDirectosCop += montoCop;
-      }
-    }
-
-    return {
-      cantidad: entradas.length,
-      abonosCuentaPropiaCop,
-      abonosDirectosCop,
-      totalEntradasCop: abonosCuentaPropiaCop + abonosDirectosCop,
-    };
-  }
-
-  private calcularResumenSalidas(
-    salidas: Array<{
-      id: string;
-      tipo: TipoSalida;
-      montoCop: Prisma.Decimal;
-    }>,
-  ) {
-    let pagosAcreedoresCop = 0;
-    let gastosCop = 0;
-    let retirosCop = 0;
-
-    for (const salida of salidas) {
-      const montoCop = Number(salida.montoCop);
-
-      if (salida.tipo === TipoSalida.PAGO_ACREEDOR) {
-        pagosAcreedoresCop += montoCop;
-        continue;
-      }
-
-      if (salida.tipo === TipoSalida.GASTO) {
-        gastosCop += montoCop;
-        continue;
-      }
-
-      if (salida.tipo === TipoSalida.RETIRO) {
-        retirosCop += montoCop;
-      }
-    }
-
-    return {
-      cantidad: salidas.length,
-      pagosAcreedoresCop,
-      gastosCop,
-      retirosCop,
-      totalSalidasCop:
-        pagosAcreedoresCop +
-        gastosCop +
-        retirosCop,
-    };
-  }
-
-  private calcularResumenCuentas(
-    cuentas: Array<{
-      id: string;
-      nombre: string;
-      moneda: string;
-      categoria: CategoriaCuenta;
-      tipo: string;
-      saldo: Prisma.Decimal;
-    }>,
-  ) {
-    const saldoCuentasCop = cuentas
-      .filter(
-        (cuenta) =>
-          cuenta.categoria === CategoriaCuenta.BASE_COP &&
-          cuenta.moneda === 'COP',
-      )
-      .reduce(
-        (total, cuenta) => total + Number(cuenta.saldo),
-        0,
+    /**
+     * Dinero líquido disponible actualmente
+     * en cuentas COP.
+     */
+    const disponibleCop =
+      this.redondearDosDecimales(
+        cuentasBaseResponse.reduce(
+          (total, cuenta) =>
+            total + cuenta.saldo,
+          0,
+        ),
       );
 
-    const porMoneda = cuentas.reduce<Record<string, number>>(
-      (acc, cuenta) => {
-        acc[cuenta.moneda] =
-          (acc[cuenta.moneda] ?? 0) + Number(cuenta.saldo);
+    /**
+     * ======================================
+     * CUENTAS OPERATIVAS
+     * ======================================
+     *
+     * IMPORTANTE:
+     *
+     * Para el dashboard valorizamos el saldo
+     * REAL actual de la cuenta usando el
+     * promedio de compra.
+     *
+     * saldoActual × promedioCompra
+     *
+     * No utilizamos directamente
+     * costoInventarioCop porque ese valor
+     * corresponde al saldo reconstruido
+     * desde operaciones.
+     */
+    const cuentasOperativas =
+      promedios.map((cuenta) => {
+        const saldoActual =
+          Number(cuenta.saldoActual ?? 0);
 
-        return acc;
-      },
-      {},
-    );
+        const saldoCalculado =
+          Number(cuenta.saldoCalculado ?? 0);
 
-    return {
-      cantidad: cuentas.length,
-      saldoCuentasCop,
-      porMoneda,
-      detalle: cuentas.map((cuenta) => ({
-        ...cuenta,
-        saldo: Number(cuenta.saldo),
-      })),
-    };
-  }
+        const promedioCompra =
+          Number(cuenta.promedioCompra ?? 0);
 
-  private calcularCartera(
-    movimientos: Array<{
-      clienteId: string;
-      debitoCop: Prisma.Decimal;
-      creditoCop: Prisma.Decimal;
-      cliente: {
-        id: string;
-        nombre: string;
-        documento: string | null;
-        telefono: string | null;
-        estado: string;
-      };
-    }>,
-  ) {
-    const balances = new Map<
-      string,
-      {
-        cliente: {
-          id: string;
-          nombre: string;
-          documento: string | null;
-          telefono: string | null;
-          estado: string;
-        };
-        totalDebitosCop: number;
-        totalCreditosCop: number;
-      }
-    >();
+        const valorActualCop =
+          this.redondearDosDecimales(
+            saldoActual *
+              promedioCompra,
+          );
 
-    for (const movimiento of movimientos) {
-      const balanceActual = balances.get(movimiento.clienteId) ?? {
-        cliente: movimiento.cliente,
-        totalDebitosCop: 0,
-        totalCreditosCop: 0,
-      };
-
-      balanceActual.totalDebitosCop += Number(movimiento.debitoCop);
-      balanceActual.totalCreditosCop += Number(movimiento.creditoCop);
-
-      balances.set(movimiento.clienteId, balanceActual);
-    }
-
-    const detalle = Array.from(balances.values())
-      .map((item) => {
-        const saldoCop =
-          item.totalDebitosCop - item.totalCreditosCop;
+        const diferenciaSaldo =
+          this.redondearDosDecimales(
+            saldoActual -
+              saldoCalculado,
+          );
 
         return {
-          cliente: item.cliente,
-          totalDebitosCop: item.totalDebitosCop,
-          totalCreditosCop: item.totalCreditosCop,
-          saldoCop,
-          estado:
-            saldoCop > 0
-              ? 'ME_DEBE'
-              : saldoCop < 0
-                ? 'LE_DEBO'
-                : 'SALDADO',
+          id: cuenta.cuentaId,
+
+          nombre: cuenta.cuenta,
+
+          moneda: cuenta.moneda,
+
+          saldoActual,
+
+          saldoCalculado,
+
+          diferenciaSaldo,
+
+          promedioCompra,
+
+          tasaMinimaVenta:
+            Number(
+              cuenta.tasaMinimaVenta ?? 0,
+            ),
+
+          /**
+           * Costo calculado por el algoritmo
+           * FIFO/promedio móvil existente.
+           */
+          costoInventarioCalculadoCop:
+            Number(
+              cuenta.costoInventarioCop ??
+                0,
+            ),
+
+          /**
+           * Valor que realmente nos interesa
+           * para el dashboard:
+           *
+           * saldo físico actual × promedio.
+           */
+          valorActualCop,
+
+          totalOperacionesAnalizadas:
+            cuenta.totalOperacionesAnalizadas,
         };
-      })
-      .filter((item) => item.saldoCop !== 0);
+      });
 
-    const porCobrar = detalle
-      .filter((item) => item.saldoCop > 0)
-      .sort((a, b) => b.saldoCop - a.saldoCop);
+    /**
+     * Valor total del dinero/divisas que
+     * actualmente queda en las cuentas
+     * operativas.
+     */
+    const inventarioDivisasCop =
+      this.redondearDosDecimales(
+        cuentasOperativas.reduce(
+          (total, cuenta) =>
+            total +
+            cuenta.valorActualCop,
+          0,
+        ),
+      );
 
-    const porPagar = detalle
-      .filter((item) => item.saldoCop < 0)
-      .sort((a, b) => a.saldoCop - b.saldoCop);
-
-    const porCobrarCop = porCobrar.reduce(
-      (total, item) => total + item.saldoCop,
-      0,
-    );
-
-    const porPagarCop = porPagar.reduce(
-      (total, item) => total + Math.abs(item.saldoCop),
-      0,
-    );
+    /**
+     * ======================================
+     * CAPITAL OPERATIVO
+     * ======================================
+     *
+     * Dinero COP disponible
+     * +
+     * divisas valorizadas al costo promedio.
+     */
+    const capitalOperativoCop =
+      this.redondearDosDecimales(
+        disponibleCop +
+          inventarioDivisasCop,
+      );
 
     return {
-      porCobrarCop,
-      porPagarCop,
-      balanceNetoCop: porCobrarCop - porPagarCop,
-      cantidadDeudores: porCobrar.length,
-      cantidadAcreedores: porPagar.length,
-      principalesDeudores: porCobrar.slice(0, 5),
-      principalesAcreedores: porPagar.slice(0, 5),
+      disponibleCop,
+
+      inventarioDivisasCop,
+
+      capitalOperativoCop,
+
+      resumen: {
+        cantidadCuentasBase:
+          cuentasBaseResponse.length,
+
+        cantidadCuentasOperativas:
+          cuentasOperativas.length,
+      },
+
+      cuentasBase:
+        cuentasBaseResponse,
+
+      cuentasOperativas,
     };
   }
 
-  private crearFechaInicio(value: string) {
-    const fecha = new Date(value);
-    fecha.setHours(0, 0, 0, 0);
-    return fecha;
+  /**
+   * ==========================================
+   * CAJA DEL DÍA
+   * ==========================================
+   *
+   * Solo trabajamos con cuentas BASE_COP.
+   *
+   * saldo inicial
+   * + entradas
+   * - salidas
+   * = saldo final
+   */
+  private async obtenerCajaDia(
+    inicio: Date,
+    fin: Date,
+  ) {
+    const cuentas =
+      await this.prisma.cuenta.findMany({
+        where: {
+          categoria:
+            CategoriaCuenta.BASE_COP,
+
+          moneda: 'COP',
+
+          estado:
+            EstadoEntidad.ACTIVO,
+        },
+
+        orderBy: {
+          nombre: 'asc',
+        },
+
+        select: {
+          id: true,
+          nombre: true,
+          moneda: true,
+          tipo: true,
+          saldo: true,
+          aplica4x1000: true,
+        },
+      });
+
+    /**
+     * Todos los movimientos realizados
+     * durante el día seleccionado.
+     */
+    const movimientosDia =
+      await this.prisma.movimientoCuenta
+        .findMany({
+          where: {
+            cuentaId: {
+              in: cuentas.map(
+                (cuenta) =>
+                  cuenta.id,
+              ),
+            },
+
+            creadoEn: {
+              gte: inicio,
+              lt: fin,
+            },
+          },
+
+          orderBy: {
+            creadoEn: 'asc',
+          },
+        });
+
+    /**
+     * Necesitamos conocer el saldo existente
+     * justo antes de comenzar el día.
+     *
+     * Esto permite consultar:
+     *
+     * hoy
+     * ayer
+     * cualquier fecha histórica
+     */
+    const movimientosAnteriores =
+      await Promise.all(
+        cuentas.map(async (cuenta) => {
+          const movimiento =
+            await this.prisma
+              .movimientoCuenta
+              .findFirst({
+                where: {
+                  cuentaId:
+                    cuenta.id,
+
+                  creadoEn: {
+                    lt: inicio,
+                  },
+                },
+
+                orderBy: {
+                  creadoEn: 'desc',
+                },
+
+                select: {
+                  cuentaId: true,
+                  saldoNuevo: true,
+                },
+              });
+
+          return {
+            cuentaId: cuenta.id,
+            movimiento,
+          };
+        }),
+      );
+
+    const saldoAnteriorPorCuenta =
+      new Map<
+        string,
+        number | null
+      >();
+
+    for (
+      const item of movimientosAnteriores
+    ) {
+      saldoAnteriorPorCuenta.set(
+        item.cuentaId,
+        item.movimiento
+          ? Number(
+              item.movimiento
+                .saldoNuevo,
+            )
+          : null,
+      );
+    }
+
+    /**
+     * ======================================
+     * RESUMEN POR CUENTA
+     * ======================================
+     */
+
+    const cuentasCaja =
+      cuentas.map((cuenta) => {
+        const movimientos =
+          movimientosDia.filter(
+            (movimiento) =>
+              movimiento.cuentaId ===
+              cuenta.id,
+          );
+
+        /**
+         * SALDO INICIAL
+         *
+         * Prioridad:
+         *
+         * 1. saldoAnterior del primer movimiento
+         *    del día.
+         *
+         * 2. último saldoNuevo anterior al día.
+         *
+         * 3. si jamás tuvo movimientos y estamos
+         *    en el presente, utilizamos saldo.
+         */
+        let saldoInicial = 0;
+
+        const primerMovimiento =
+          movimientos[0];
+
+        if (primerMovimiento) {
+          saldoInicial =
+            Number(
+              primerMovimiento
+                .saldoAnterior,
+            );
+        } else {
+          const saldoAnterior =
+            saldoAnteriorPorCuenta.get(
+              cuenta.id,
+            );
+
+          if (
+            saldoAnterior !== null &&
+            saldoAnterior !== undefined
+          ) {
+            saldoInicial =
+              saldoAnterior;
+          } else {
+            /**
+             * Cuenta sin historial.
+             *
+             * Normalmente será una cuenta con
+             * saldo 0.
+             */
+            saldoInicial = 0;
+          }
+        }
+
+        let entradas = 0;
+        let salidas = 0;
+
+        for (
+          const movimiento of movimientos
+        ) {
+          const anterior =
+            Number(
+              movimiento.saldoAnterior,
+            );
+
+          const nuevo =
+            Number(
+              movimiento.saldoNuevo,
+            );
+
+          const diferencia =
+            this.redondearDosDecimales(
+              nuevo - anterior,
+            );
+
+          /**
+           * Esta estrategia es mejor que
+           * depender del enum:
+           *
+           * saldo subió → entrada
+           * saldo bajó → salida
+           *
+           * Incluye:
+           * - entradas
+           * - salidas
+           * - gastos
+           * - traslados
+           * - ajustes
+           */
+          if (diferencia > 0) {
+            entradas += diferencia;
+          }
+
+          if (diferencia < 0) {
+            salidas +=
+              Math.abs(diferencia);
+          }
+        }
+
+        entradas =
+          this.redondearDosDecimales(
+            entradas,
+          );
+
+        salidas =
+          this.redondearDosDecimales(
+            salidas,
+          );
+
+        /**
+         * El último movimiento nos da el
+         * cierre real del día.
+         */
+        const ultimoMovimiento =
+          movimientos[
+            movimientos.length - 1
+          ];
+
+        const saldoFinal =
+          ultimoMovimiento
+            ? Number(
+                ultimoMovimiento
+                  .saldoNuevo,
+              )
+            : saldoInicial;
+
+        const variacion =
+          this.redondearDosDecimales(
+            saldoFinal -
+              saldoInicial,
+          );
+
+        return {
+          id: cuenta.id,
+
+          nombre: cuenta.nombre,
+
+          moneda: cuenta.moneda,
+
+          tipo: cuenta.tipo,
+
+          aplica4x1000:
+            cuenta.aplica4x1000,
+
+          saldoInicial:
+            this.redondearDosDecimales(
+              saldoInicial,
+            ),
+
+          entradas,
+
+          salidas,
+
+          variacion,
+
+          saldoFinal:
+            this.redondearDosDecimales(
+              saldoFinal,
+            ),
+
+          /**
+           * Saldo actual real de la cuenta.
+           *
+           * Es útil para comparar cuando
+           * consultamos el día actual.
+           */
+          saldoActual:
+            Number(cuenta.saldo),
+
+          cantidadMovimientos:
+            movimientos.length,
+        };
+      });
+
+    /**
+     * ======================================
+     * TOTALES CAJA
+     * ======================================
+     */
+
+    const saldoInicial =
+      this.redondearDosDecimales(
+        cuentasCaja.reduce(
+          (total, cuenta) =>
+            total +
+            cuenta.saldoInicial,
+          0,
+        ),
+      );
+
+    const entradas =
+      this.redondearDosDecimales(
+        cuentasCaja.reduce(
+          (total, cuenta) =>
+            total +
+            cuenta.entradas,
+          0,
+        ),
+      );
+
+    const salidas =
+      this.redondearDosDecimales(
+        cuentasCaja.reduce(
+          (total, cuenta) =>
+            total +
+            cuenta.salidas,
+          0,
+        ),
+      );
+
+    const saldoFinal =
+      this.redondearDosDecimales(
+        cuentasCaja.reduce(
+          (total, cuenta) =>
+            total +
+            cuenta.saldoFinal,
+          0,
+        ),
+      );
+
+    const variacion =
+      this.redondearDosDecimales(
+        saldoFinal -
+          saldoInicial,
+      );
+
+    return {
+      resumen: {
+        saldoInicial,
+        entradas,
+        salidas,
+        variacion,
+        saldoFinal,
+      },
+
+      cuentas:
+        cuentasCaja,
+
+      movimientos:
+        movimientosDia.map(
+          (movimiento) => {
+            const saldoAnterior =
+              Number(
+                movimiento.saldoAnterior,
+              );
+
+            const saldoNuevo =
+              Number(
+                movimiento.saldoNuevo,
+              );
+
+            const diferencia =
+              this.redondearDosDecimales(
+                saldoNuevo -
+                  saldoAnterior,
+              );
+
+            return {
+              id: movimiento.id,
+
+              cuentaId:
+                movimiento.cuentaId,
+
+              tipo:
+                movimiento.tipo,
+
+              descripcion:
+                movimiento.descripcion,
+
+              referenciaTipo:
+                movimiento.referenciaTipo,
+
+              referenciaId:
+                movimiento.referenciaId,
+
+              moneda:
+                movimiento.moneda,
+
+              monto:
+                Number(
+                  movimiento.monto,
+                ),
+
+              entrada:
+                diferencia > 0
+                  ? diferencia
+                  : 0,
+
+              salida:
+                diferencia < 0
+                  ? Math.abs(
+                      diferencia,
+                    )
+                  : 0,
+
+              saldoAnterior,
+
+              saldoNuevo,
+
+              creadoEn:
+                movimiento.creadoEn,
+            };
+          },
+        ),
+    };
   }
 
-  private crearFechaFin(value: string) {
-    const fecha = new Date(value);
-    fecha.setHours(23, 59, 59, 999);
-    return fecha;
+  /**
+   * ==========================================
+   * FECHAS
+   * ==========================================
+   */
+
+  private obtenerFechaActualVenezuela() {
+    return new Intl.DateTimeFormat(
+      'en-CA',
+      {
+        timeZone:
+          'America/Caracas',
+
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      },
+    ).format(new Date());
   }
 
-  private inicioDelDia(fecha: Date) {
-    const resultado = new Date(fecha);
-    resultado.setHours(0, 0, 0, 0);
-    return resultado;
+  private obtenerRangoDia(
+    fecha: string,
+  ) {
+    /**
+     * Inicio:
+     * 2026-07-23 00:00 Venezuela
+     *
+     * JS lo convierte internamente a UTC.
+     */
+    const inicio = new Date(
+      `${fecha}T00:00:00.000${this.timezoneOffset}`,
+    );
+
+    /**
+     * Calculamos el siguiente día usando UTC
+     * solo para manipular YYYY-MM-DD.
+     */
+    const [
+      year,
+      month,
+      day,
+    ] = fecha
+      .split('-')
+      .map(Number);
+
+    const siguiente =
+      new Date(
+        Date.UTC(
+          year,
+          month - 1,
+          day + 1,
+        ),
+      );
+
+    const siguienteFecha = [
+      siguiente
+        .getUTCFullYear()
+        .toString()
+        .padStart(4, '0'),
+
+      (
+        siguiente.getUTCMonth() +
+        1
+      )
+        .toString()
+        .padStart(2, '0'),
+
+      siguiente
+        .getUTCDate()
+        .toString()
+        .padStart(2, '0'),
+    ].join('-');
+
+    const fin = new Date(
+      `${siguienteFecha}T00:00:00.000${this.timezoneOffset}`,
+    );
+
+    return {
+      inicio,
+      fin,
+    };
   }
 
-  private finDelDia(fecha: Date) {
-    const resultado = new Date(fecha);
-    resultado.setHours(23, 59, 59, 999);
-    return resultado;
+  private validarFecha(
+    fecha: string,
+  ) {
+    const regex =
+      /^\d{4}-\d{2}-\d{2}$/;
+
+    if (!regex.test(fecha)) {
+      throw new BadRequestException(
+        'La fecha debe tener formato YYYY-MM-DD.',
+      );
+    }
+
+    const fechaDate =
+      new Date(`${fecha}T12:00:00Z`);
+
+    if (
+      Number.isNaN(
+        fechaDate.getTime(),
+      )
+    ) {
+      throw new BadRequestException(
+        'La fecha indicada no es válida.',
+      );
+    }
+  }
+
+  private redondearDosDecimales(
+    valor: number,
+  ) {
+    return (
+      Math.round(
+        (
+          valor +
+          Number.EPSILON
+        ) * 100,
+      ) / 100
+    );
   }
 }

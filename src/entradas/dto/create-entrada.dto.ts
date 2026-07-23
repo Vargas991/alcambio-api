@@ -28,6 +28,10 @@ export class CreateEntradaDto {
   proveedorCobra4x1000?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  aplica4x1000?: boolean;
+
+  @IsOptional()
   @IsString()
   descripcion?: string;
 

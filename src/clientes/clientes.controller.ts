@@ -28,11 +28,15 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
 import { ClienteLedgerPdfService } from './pdf/cliente-ledger-pdf.service';
 import { FilterClientesCarteraDto } from './dto/filter-clientes-cartera.dto';
+import { AjustarSaldoClienteDto } from './dto/ajustar-saldo-cliente.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('clientes')
 export class ClientesController {
-  constructor(private readonly clientesService: ClientesService, private readonly clientesLedgerPdfService: ClienteLedgerPdfService) {}
+  constructor(
+    private readonly clientesService: ClientesService,
+    private readonly clientesLedgerPdfService: ClienteLedgerPdfService,
+  ) {}
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Post()
@@ -52,12 +56,12 @@ export class ClientesController {
   async getCartera(@Query() filters: FilterClientesCarteraDto) {
     const data = await this.clientesService.getCartera(filters);
 
-    return successResponse(data, 'Cartera de clientes consultada correctamente.');
+    return successResponse(
+      data,
+      'Cartera de clientes consultada correctamente.',
+    );
   }
 
-  
-  
-  
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Patch(':id/estado')
   async updateEstado(
@@ -65,17 +69,22 @@ export class ClientesController {
     @Body() dto: UpdateEstadoClienteDto,
   ) {
     const data = await this.clientesService.updateEstado(id, dto);
-    return successResponse(data, 'Estado del cliente actualizado correctamente.');
+    return successResponse(
+      data,
+      'Estado del cliente actualizado correctamente.',
+    );
   }
-  
-  
+
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/balance')
   async getBalance(@Param('id') id: string) {
     const data = await this.clientesService.getBalance(id);
-    return successResponse(data, 'Balance del cliente encontrado correctamente.');
+    return successResponse(
+      data,
+      'Balance del cliente encontrado correctamente.',
+    );
   }
-  
+
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/ledger')
   async getLedger(
@@ -88,14 +97,17 @@ export class ClientesController {
       'Libro mayor del cliente encontrado correctamente.',
     );
   }
-  
+
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/perfil')
   async getPerfil(@Param('id') id: string) {
     const data = await this.clientesService.getPerfil(id);
-    return successResponse(data, 'Perfil del cliente encontrado correctamente.');
+    return successResponse(
+      data,
+      'Perfil del cliente encontrado correctamente.',
+    );
   }
-  
+
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/ledger/pdf')
   async getLedgerPdf(
@@ -111,8 +123,14 @@ export class ClientesController {
       'Content-Disposition': `attachment; filename="ledger-cliente-${id}.pdf"`,
       'Content-Length': pdfBuffer.length,
     });
-    
+
     res.end(pdfBuffer);
+  }
+
+  @Patch(':id/ajustar-saldo')
+  async ajustarSaldo(@Param('id') id: string, @Body() dto: AjustarSaldoClienteDto) {
+    const data = await this.clientesService.ajustarSaldo(id, dto);
+    return successResponse(data, "Ajuste realizado satisfactoriamente.")
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
@@ -121,20 +139,18 @@ export class ClientesController {
     const data = await this.clientesService.update(id, dto);
     return successResponse(data, 'Cliente actualizado correctamente.');
   }
-  
-  
+
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id')
   async findOne(@Param('id') id: string) {
     const data = await this.clientesService.findOne(id);
     return successResponse(data, 'Cliente encontrado correctamente.');
   }
-  
+
   @Roles(RolUsuario.ADMIN)
   @Delete(':id')
   async remove(@Param('id') id: string) {
     const data = await this.clientesService.remove(id);
     return successResponse(data, 'Cliente inactivado correctamente.');
   }
-  
 }

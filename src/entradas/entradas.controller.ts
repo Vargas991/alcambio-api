@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 
@@ -18,6 +20,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
 import { CancelarEntradaDto } from './dto/cancelar-entrada.dto';
+import { UpdateEntradaDto } from './dto/update-entrada.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('entradas')
@@ -40,12 +43,21 @@ export class EntradasController {
 
   @Roles(RolUsuario.ADMIN)
   @Patch(':id/cancelar')
-  async cancelar(
-    @Param('id') id: string,
-    @Body() dto: CancelarEntradaDto,
-  ) {
+  async cancelar(@Param('id') id: string, @Body() dto: CancelarEntradaDto) {
     const data = await this.entradasService.cancelar(id, dto);
     return successResponse(data, 'Entrada cancelada correctamente.');
+  }
+
+  @Put(':id')
+  async editar(@Param('id') id: string, @Body() dto: UpdateEntradaDto) {
+    const data = await  this.entradasService.editar(id, dto);
+    return successResponse(data, "Entrada editada con Exito.")
+  }
+
+  @Delete(':id')
+  async eliminar(@Param('id') id: string) {
+    const data = await this.entradasService.eliminar(id);
+    return successResponse(data, "Entrada Eliminada con Exito.")
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
