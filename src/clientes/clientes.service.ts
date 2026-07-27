@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 import {
   EstadoEntidad,
@@ -35,8 +39,19 @@ export class ClientesService {
     });
   }
 
-  async findAll() {
+  async findAll(nombre?: string) {
+    const buscar = nombre?.trim();
+
     return this.prisma.cliente.findMany({
+      where: buscar
+        ? {
+            nombre: {
+              contains: buscar,
+              mode: 'insensitive',
+            },
+          }
+        : undefined,
+
       orderBy: {
         creadoEn: 'desc',
       },
@@ -129,286 +144,286 @@ export class ClientesService {
     };
   }
 
-async getLedger(id: string, filters: FilterClienteLedgerDto) {
-  const cliente = await this.prisma.cliente.findUnique({
-    where: {
-      id,
-    },
-    select: {
-      id: true,
-      nombre: true,
-      documento: true,
-      telefono: true,
-      estado: true,
-    },
-  });
-
-  if (!cliente) {
-    throw new BadRequestException('El cliente no existe.');
-  }
-
-  const andConditions: Prisma.MovimientoClienteWhereInput[] = [
-    {
-      clienteId: id,
-    },
-  ];
-
-  if (filters.tipoMov) {
-    andConditions.push({
-      tipo: filters.tipoMov,
-    });
-  }
-
-  const puedeFiltrarPorOperacion =
-    !filters.tipoMov || filters.tipoMov === 'OPERACION';
-
-  if (puedeFiltrarPorOperacion && (filters.tipo || filters.estado)) {
-    andConditions.push({
-      operacion: {
-        ...(filters.tipo && {
-          tipo: filters.tipo,
-        }),
-        ...(filters.estado && {
-          estado: filters.estado,
-        }),
+  async getLedger(id: string, filters: FilterClienteLedgerDto) {
+    const cliente = await this.prisma.cliente.findUnique({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        documento: true,
+        telefono: true,
+        estado: true,
       },
     });
-  }
 
-  if (filters.moneda) {
-    andConditions.push({
-      monedaTransaccion: filters.moneda,
-    });
-  }
-
-  if (filters.desde || filters.hasta) {
-    const creadoEn: Prisma.DateTimeFilter = {};
-
-    if (filters.desde) {
-      creadoEn.gte = buildStartOfDayUtcFromLocal(filters.desde);
+    if (!cliente) {
+      throw new BadRequestException('El cliente no existe.');
     }
 
-    if (filters.hasta) {
-      creadoEn.lte = buildEndOfDayUtcFromLocal(filters.hasta);
+    const andConditions: Prisma.MovimientoClienteWhereInput[] = [
+      {
+        clienteId: id,
+      },
+    ];
+
+    if (filters.tipoMov) {
+      andConditions.push({
+        tipo: filters.tipoMov,
+      });
     }
 
-    andConditions.push({
-      creadoEn,
-    });
-  }
+    const puedeFiltrarPorOperacion =
+      !filters.tipoMov || filters.tipoMov === 'OPERACION';
 
-  const where: Prisma.MovimientoClienteWhereInput = {
-    AND: andConditions,
-  };
+    if (puedeFiltrarPorOperacion && (filters.tipo || filters.estado)) {
+      andConditions.push({
+        operacion: {
+          ...(filters.tipo && {
+            tipo: filters.tipo,
+          }),
+          ...(filters.estado && {
+            estado: filters.estado,
+          }),
+        },
+      });
+    }
 
-  const movimientos = await this.prisma.movimientoCliente.findMany({
-    where,
-    orderBy: {
-      creadoEn: 'desc',
-    },
-    include: {
-      operacion: {
-        include: {
-          deudor: {
-            select: {
-              id: true,
-              nombre: true,
+    if (filters.moneda) {
+      andConditions.push({
+        monedaTransaccion: filters.moneda,
+      });
+    }
+
+    if (filters.desde || filters.hasta) {
+      const creadoEn: Prisma.DateTimeFilter = {};
+
+      if (filters.desde) {
+        creadoEn.gte = buildStartOfDayUtcFromLocal(filters.desde);
+      }
+
+      if (filters.hasta) {
+        creadoEn.lte = buildEndOfDayUtcFromLocal(filters.hasta);
+      }
+
+      andConditions.push({
+        creadoEn,
+      });
+    }
+
+    const where: Prisma.MovimientoClienteWhereInput = {
+      AND: andConditions,
+    };
+
+    const movimientos = await this.prisma.movimientoCliente.findMany({
+      where,
+      orderBy: {
+        creadoEn: 'desc',
+      },
+      include: {
+        operacion: {
+          include: {
+            deudor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            cuentaOperativa: {
+              select: {
+                id: true,
+                nombre: true,
+                moneda: true,
+              },
             },
           },
-          acreedor: {
-            select: {
-              id: true,
-              nombre: true,
+        },
+        entrada: {
+          include: {
+            deudor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            cuenta: {
+              select: {
+                id: true,
+                nombre: true,
+                moneda: true,
+              },
             },
           },
-          cuentaOperativa: {
-            select: {
-              id: true,
-              nombre: true,
-              moneda: true,
+        },
+        salida: {
+          include: {
+            acreedor: {
+              select: {
+                id: true,
+                nombre: true,
+              },
+            },
+            cuenta: {
+              select: {
+                id: true,
+                nombre: true,
+                moneda: true,
+              },
             },
           },
         },
       },
-      entrada: {
-        include: {
-          deudor: {
-            select: {
-              id: true,
-              nombre: true,
-            },
-          },
-          acreedor: {
-            select: {
-              id: true,
-              nombre: true,
-            },
-          },
-          cuenta: {
-            select: {
-              id: true,
-              nombre: true,
-              moneda: true,
-            },
-          },
-        },
+    });
+
+    const totalDebitosCop = movimientos.reduce(
+      (acc, mov) => acc + Number(mov.debitoCop),
+      0,
+    );
+
+    const totalCreditosCop = movimientos.reduce(
+      (acc, mov) => acc + Number(mov.creditoCop),
+      0,
+    );
+
+    const saldoFiltradoCop = totalDebitosCop - totalCreditosCop;
+
+    const movimientosTotales = await this.prisma.movimientoCliente.findMany({
+      where: {
+        clienteId: id,
       },
-      salida: {
-        include: {
-          acreedor: {
-            select: {
-              id: true,
-              nombre: true,
-            },
-          },
-          cuenta: {
-            select: {
-              id: true,
-              nombre: true,
-              moneda: true,
-            },
-          },
-        },
+      select: {
+        debitoCop: true,
+        creditoCop: true,
       },
-    },
-  });
+    });
 
-  const totalDebitosCop = movimientos.reduce(
-    (acc, mov) => acc + Number(mov.debitoCop),
-    0,
-  );
-
-  const totalCreditosCop = movimientos.reduce(
-    (acc, mov) => acc + Number(mov.creditoCop),
-    0,
-  );
-
-  const saldoFiltradoCop = totalDebitosCop - totalCreditosCop;
-
-  const movimientosTotales = await this.prisma.movimientoCliente.findMany({
-    where: {
-      clienteId: id,
-    },
-    select: {
-      debitoCop: true,
-      creditoCop: true,
-    },
-  });
-
-  const totalDebitosGlobalCop = movimientosTotales.reduce(
-    (acc, mov) => acc + Number(mov.debitoCop),
-    0,
-  );
-
-  const totalCreditosGlobalCop = movimientosTotales.reduce(
-    (acc, mov) => acc + Number(mov.creditoCop),
-    0,
-  );
-
-  const saldoTotalCop = totalDebitosGlobalCop - totalCreditosGlobalCop;
-
-  const totalUtilidadRealCop = movimientos.reduce((acc, mov) => {
-    if (!mov.operacion) {
-      return acc;
-    }
-
-    const generaUtilidadReal = this.operacionGeneraUtilidadReal(
-      mov.operacion.tipo,
+    const totalDebitosGlobalCop = movimientosTotales.reduce(
+      (acc, mov) => acc + Number(mov.debitoCop),
+      0,
     );
 
-    if (!generaUtilidadReal) {
-      return acc;
-    }
-
-    return acc + Number(mov.operacion.utilidadCop ?? 0);
-  }, 0);
-
-  const utilidadPorDiaMap = new Map<string, number>();
-
-  for (const mov of movimientos) {
-    if (!mov.operacion) {
-      continue;
-    }
-
-    const generaUtilidadReal = this.operacionGeneraUtilidadReal(
-      mov.operacion.tipo,
+    const totalCreditosGlobalCop = movimientosTotales.reduce(
+      (acc, mov) => acc + Number(mov.creditoCop),
+      0,
     );
 
-    if (!generaUtilidadReal) {
-      continue;
+    const saldoTotalCop = totalDebitosGlobalCop - totalCreditosGlobalCop;
+
+    const totalUtilidadRealCop = movimientos.reduce((acc, mov) => {
+      if (!mov.operacion) {
+        return acc;
+      }
+
+      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+        mov.operacion.tipo,
+      );
+
+      if (!generaUtilidadReal) {
+        return acc;
+      }
+
+      return acc + Number(mov.operacion.utilidadCop ?? 0);
+    }, 0);
+
+    const utilidadPorDiaMap = new Map<string, number>();
+
+    for (const mov of movimientos) {
+      if (!mov.operacion) {
+        continue;
+      }
+
+      const generaUtilidadReal = this.operacionGeneraUtilidadReal(
+        mov.operacion.tipo,
+      );
+
+      if (!generaUtilidadReal) {
+        continue;
+      }
+
+      const fecha = mov.creadoEn.toISOString().slice(0, 10);
+      const utilidadCop = Number(mov.operacion.utilidadCop ?? 0);
+
+      utilidadPorDiaMap.set(
+        fecha,
+        (utilidadPorDiaMap.get(fecha) ?? 0) + utilidadCop,
+      );
     }
 
-    const fecha = mov.creadoEn.toISOString().slice(0, 10);
-    const utilidadCop = Number(mov.operacion.utilidadCop ?? 0);
+    const utilidadPorDia = Array.from(utilidadPorDiaMap.entries())
+      .map(([fecha, utilidadCop]) => ({
+        fecha,
+        utilidadCop,
+      }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-    utilidadPorDiaMap.set(
-      fecha,
-      (utilidadPorDiaMap.get(fecha) ?? 0) + utilidadCop,
+    const movimientosOrdenadosAsc = [...movimientos].sort(
+      (a, b) => a.creadoEn.getTime() - b.creadoEn.getTime(),
     );
-  }
 
-  const utilidadPorDia = Array.from(utilidadPorDiaMap.entries())
-    .map(([fecha, utilidadCop]) => ({
-      fecha,
-      utilidadCop,
-    }))
-    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+    let saldoAcumuladoCop = 0;
 
-  const movimientosOrdenadosAsc = [...movimientos].sort(
-    (a, b) => a.creadoEn.getTime() - b.creadoEn.getTime(),
-  );
+    const movimientosConSaldo = movimientosOrdenadosAsc.map((mov) => {
+      const debitoCop = Number(mov.debitoCop);
+      const creditoCop = Number(mov.creditoCop);
 
-  let saldoAcumuladoCop = 0;
+      saldoAcumuladoCop += debitoCop - creditoCop;
 
-  const movimientosConSaldo = movimientosOrdenadosAsc.map((mov) => {
-    const debitoCop = Number(mov.debitoCop);
-    const creditoCop = Number(mov.creditoCop);
+      const utilidadRealCop =
+        mov.operacion && this.operacionGeneraUtilidadReal(mov.operacion.tipo)
+          ? Number(mov.operacion.utilidadCop ?? 0)
+          : 0;
 
-    saldoAcumuladoCop += debitoCop - creditoCop;
+      return {
+        ...mov,
+        utilidadRealCop,
+        saldoAcumuladoCop,
+      };
+    });
 
-    const utilidadRealCop =
-      mov.operacion && this.operacionGeneraUtilidadReal(mov.operacion.tipo)
-        ? Number(mov.operacion.utilidadCop ?? 0)
-        : 0;
+    const movimientosRespuesta = movimientosConSaldo.sort(
+      (a, b) => b.creadoEn.getTime() - a.creadoEn.getTime(),
+    );
 
     return {
-      ...mov,
-      utilidadRealCop,
-      saldoAcumuladoCop,
+      cliente,
+      filtros: {
+        desde: filters.desde ?? null,
+        hasta: filters.hasta ?? null,
+        tipo: filters.tipo ?? null,
+        estado: filters.estado ?? null,
+        tipoMov: filters.tipoMov ?? null,
+        moneda: filters.moneda ?? null,
+      },
+      resumen: {
+        totalDebitosCop,
+        totalCreditosCop,
+        saldoFiltradoCop,
+        estado: this.obtenerEstadoBalance(saldoFiltradoCop),
+
+        totalDebitosGlobalCop,
+        totalCreditosGlobalCop,
+        saldoTotalCop,
+        estadoTotal: this.obtenerEstadoBalance(saldoTotalCop),
+
+        totalUtilidadRealCop,
+        utilidadPorDia,
+      },
+      movimientos: movimientosRespuesta,
     };
-  });
-
-  const movimientosRespuesta = movimientosConSaldo.sort(
-    (a, b) => b.creadoEn.getTime() - a.creadoEn.getTime(),
-  );
-
-  return {
-    cliente,
-    filtros: {
-      desde: filters.desde ?? null,
-      hasta: filters.hasta ?? null,
-      tipo: filters.tipo ?? null,
-      estado: filters.estado ?? null,
-      tipoMov: filters.tipoMov ?? null,
-      moneda: filters.moneda ?? null,
-    },
-    resumen: {
-      totalDebitosCop,
-      totalCreditosCop,
-      saldoFiltradoCop,
-      estado: this.obtenerEstadoBalance(saldoFiltradoCop),
-
-      totalDebitosGlobalCop,
-      totalCreditosGlobalCop,
-      saldoTotalCop,
-      estadoTotal: this.obtenerEstadoBalance(saldoTotalCop),
-
-      totalUtilidadRealCop,
-      utilidadPorDia,
-    },
-    movimientos: movimientosRespuesta,
-  };
-}
+  }
 
   async getCartera(filters: FilterClientesCarteraDto) {
     const where: Prisma.ClienteWhereInput = {};
@@ -517,109 +532,99 @@ async getLedger(id: string, filters: FilterClienteLedgerDto) {
     };
   }
 
-  async ajustarSaldo(
-  clienteId: string,
-  dto: AjustarSaldoClienteDto,
-) {
-  const cliente = await this.prisma.cliente.findUnique({
-    where: {
-      id: clienteId,
-    },
-  });
-
-  if (!cliente) {
-    throw new NotFoundException('El cliente no existe.');
-  }
-
-  return this.prisma.$transaction(async (tx) => {
-    /**
-     * 1. Obtener saldo actual desde el ledger.
-     */
-    const totales = await tx.movimientoCliente.aggregate({
+  async ajustarSaldo(clienteId: string, dto: AjustarSaldoClienteDto) {
+    const cliente = await this.prisma.cliente.findUnique({
       where: {
-        clienteId,
-      },
-      _sum: {
-        debitoCop: true,
-        creditoCop: true,
+        id: clienteId,
       },
     });
 
-    const totalDebitos = Number(totales._sum.debitoCop ?? 0);
-    const totalCreditos = Number(totales._sum.creditoCop ?? 0);
+    if (!cliente) {
+      throw new NotFoundException('El cliente no existe.');
+    }
 
-    const saldoActualCop = totalDebitos - totalCreditos;
+    return this.prisma.$transaction(async (tx) => {
+      /**
+       * 1. Obtener saldo actual desde el ledger.
+       */
+      const totales = await tx.movimientoCliente.aggregate({
+        where: {
+          clienteId,
+        },
+        _sum: {
+          debitoCop: true,
+          creditoCop: true,
+        },
+      });
 
-    /**
-     * 2. Calcular cuánto debemos mover para llegar
-     * exactamente al saldo solicitado.
-     */
-    const saldoObjetivoCop = Number(dto.saldoObjetivoCop);
+      const totalDebitos = Number(totales._sum.debitoCop ?? 0);
+      const totalCreditos = Number(totales._sum.creditoCop ?? 0);
 
-    const diferenciaCop = saldoObjetivoCop - saldoActualCop;
+      const saldoActualCop = totalDebitos - totalCreditos;
 
-    if (Math.abs(diferenciaCop) < 0.01) {
+      /**
+       * 2. Calcular cuánto debemos mover para llegar
+       * exactamente al saldo solicitado.
+       */
+      const saldoObjetivoCop = Number(dto.saldoObjetivoCop);
+
+      const diferenciaCop = saldoObjetivoCop - saldoActualCop;
+
+      if (Math.abs(diferenciaCop) < 0.01) {
+        return {
+          clienteId: cliente.id,
+          cliente: cliente.nombre,
+          saldoAnteriorCop: saldoActualCop,
+          saldoNuevoCop: saldoActualCop,
+          ajusteCop: 0,
+          mensaje: 'El cliente ya tiene el saldo indicado.',
+        };
+      }
+
+      /**
+       * saldo = débito - crédito
+       *
+       * diferencia positiva:
+       * necesitamos aumentar saldo → DÉBITO
+       *
+       * diferencia negativa:
+       * necesitamos disminuir saldo → CRÉDITO
+       */
+      const debitoCop = diferenciaCop > 0 ? diferenciaCop : 0;
+
+      const creditoCop = diferenciaCop < 0 ? Math.abs(diferenciaCop) : 0;
+
+      await tx.movimientoCliente.create({
+        data: {
+          clienteId,
+          tipo: TipoMovimientoCliente.AJUSTE,
+
+          debitoCop,
+          creditoCop,
+
+          monedaTransaccion: Moneda.COP,
+          montoTransaccion: Math.abs(diferenciaCop),
+
+          descripcion: `Ajuste de saldo: ${dto.motivo}`,
+        },
+      });
+
       return {
         clienteId: cliente.id,
         cliente: cliente.nombre,
+
         saldoAnteriorCop: saldoActualCop,
-        saldoNuevoCop: saldoActualCop,
-        ajusteCop: 0,
-        mensaje: 'El cliente ya tiene el saldo indicado.',
+        saldoObjetivoCop,
+        saldoNuevoCop: saldoObjetivoCop,
+
+        ajusteCop: Math.abs(diferenciaCop),
+
+        movimiento: diferenciaCop > 0 ? 'DEBITO' : 'CREDITO',
+
+        motivo: dto.motivo,
       };
-    }
-
-    /**
-     * saldo = débito - crédito
-     *
-     * diferencia positiva:
-     * necesitamos aumentar saldo → DÉBITO
-     *
-     * diferencia negativa:
-     * necesitamos disminuir saldo → CRÉDITO
-     */
-    const debitoCop = diferenciaCop > 0
-      ? diferenciaCop
-      : 0;
-
-    const creditoCop = diferenciaCop < 0
-      ? Math.abs(diferenciaCop)
-      : 0;
-
-    await tx.movimientoCliente.create({
-      data: {
-        clienteId,
-        tipo: TipoMovimientoCliente.AJUSTE,
-
-        debitoCop,
-        creditoCop,
-
-        monedaTransaccion: Moneda.COP,
-        montoTransaccion: Math.abs(diferenciaCop),
-
-        descripcion: `Ajuste de saldo: ${dto.motivo}`,
-      },
     });
-
-    return {
-      clienteId: cliente.id,
-      cliente: cliente.nombre,
-
-      saldoAnteriorCop: saldoActualCop,
-      saldoObjetivoCop,
-      saldoNuevoCop: saldoObjetivoCop,
-
-      ajusteCop: Math.abs(diferenciaCop),
-
-      movimiento:
-        diferenciaCop > 0
-          ? 'DEBITO'
-          : 'CREDITO',
-
-      motivo: dto.motivo,
-    };
-  });
-}
+  }
 
   async getPerfil(id: string) {
     const cliente = await this.prisma.cliente.findUnique({

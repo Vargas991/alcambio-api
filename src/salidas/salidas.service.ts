@@ -143,7 +143,7 @@ export class SalidasService {
         moneda: cuenta.moneda,
         saldoAnterior: saldoActual,
         saldoNuevo,
-        descripcion: dto.descripcion ?? `Pago a acreedor ${salida.id}`,
+        descripcion: dto.descripcion ?? `Pago a acreedor ${acreedor.nombre}`,
         referenciaTipo: 'SALIDA',
         referenciaId: salida.id,
       },
@@ -164,7 +164,7 @@ export class SalidasService {
         debitoCop: calculoSalida.montoBaseCop,
         creditoCop: 0,
 
-        descripcion: dto.descripcion ?? `Pago a acreedor ${salida.id}`,
+        descripcion: dto.descripcion ?? `Pago a acreedor ${acreedor.nombre}`,
       },
     });
 

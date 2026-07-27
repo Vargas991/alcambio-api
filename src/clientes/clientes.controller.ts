@@ -47,8 +47,10 @@ export class ClientesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
-  async findAll() {
-    const data = await this.clientesService.findAll();
+  async findAll(
+    @Query('nombre') nombre?: string
+  ) {
+    const data = await this.clientesService.findAll(nombre,);
     return successResponse(data, 'Clientes encontrados correctamente.');
   }
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)

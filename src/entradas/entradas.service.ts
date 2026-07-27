@@ -608,7 +608,7 @@ private async aplicarAbonoDirectoProveedorEditado(
 
       descripcion:
         dto.descripcion ??
-        `Abono directo del deudor ${entrada.id}`,
+        `Abono directo del deudor ${deudor.nombre}`,
     },
   });
 
@@ -842,7 +842,7 @@ async eliminar(id: string) {
         debitoCop: 0,
         creditoCop: calculoAbono.montoCop,
         descripcion:
-          dto.descripcion ?? `Abono directo del deudor ${entrada.id}`,
+          dto.descripcion ?? `Abono directo del deudor ${deudor.nombre}`,
       },
     });
 
