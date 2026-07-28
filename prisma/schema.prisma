@@ -316,3 +316,16 @@ model MovimientoCliente {
 
   @@map("movimientos_clientes")
 }
+
+model ConfiguracionOrganizacion {
+  id             String   @id @default(uuid())
+  nombre         String
+  logoUrl        String?
+  telefono       String?
+  correo         String?
+  direccion      String?
+  monedaBase     Moneda   @default(COP)
+  zonaHoraria    String   @default("America/Caracas")
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+}

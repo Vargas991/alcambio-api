@@ -11,14 +11,32 @@ import { OperacionesModule } from './operaciones/operaciones.module';
 import { EntradasModule } from './entradas/entradas.module';
 import { SalidasModule } from './salidas/salidas.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ConfiguracionModule } from './configuracion/configuracion.module';
+import { ServeStaticModule } from '@nestjs/serve-static';
 
+import { join } from 'node:path';
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
     }),
-    PrismaModule, CuentasModule, AuthModule, UsuariosModule, ClientesModule, OperacionesModule, EntradasModule, SalidasModule, DashboardModule],
+    ServeStaticModule.forRoot({
+      rootPath: join(process.cwd(), 'uploads'),
+
+      serveRoot: '/uploads',
+    }),
+    PrismaModule,
+    CuentasModule,
+    AuthModule,
+    UsuariosModule,
+    ClientesModule,
+    OperacionesModule,
+    EntradasModule,
+    SalidasModule,
+    DashboardModule,
+    ConfiguracionModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
