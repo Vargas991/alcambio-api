@@ -75,217 +75,242 @@ export class DashboardService {
    * al promedio de compra.
    */
   private async obtenerCapitalOperativo() {
-    /**
-     * Cuentas financieras en COP.
-     *
-     * Ej:
-     * - Caja
-     * - Oficina
-     * - Bancolombia
-     */
-    const cuentasBase =
-      await this.prisma.cuenta.findMany({
-        where: {
-          categoria: CategoriaCuenta.BASE_COP,
-          moneda: 'COP',
-          estado: EstadoEntidad.ACTIVO,
-        },
+  const cuentasBase =
+    await this.prisma.cuenta.findMany({
+      where: {
+        categoria:
+          CategoriaCuenta.BASE_COP,
+        moneda: 'COP',
+        estado:
+          EstadoEntidad.ACTIVO,
+      },
 
-        orderBy: {
-          nombre: 'asc',
-        },
+      orderBy: {
+        nombre: 'asc',
+      },
 
-        select: {
-          id: true,
-          nombre: true,
-          moneda: true,
-          categoria: true,
-          tipo: true,
-          saldo: true,
-          aplica4x1000: true,
-        },
-      });
+      select: {
+        id: true,
+        nombre: true,
+        moneda: true,
+        categoria: true,
+        tipo: true,
+        saldo: true,
+        aplica4x1000: true,
+      },
+    });
 
-    /**
-     * Reutilizamos el método que YA tienes
-     * en CuentasService.
-     *
-     * No duplicamos el promedio ponderado.
-     */
-    const promedios =
-      await this.cuentasService
-        .obtenerPromediosCompraCuentasOperativas();
+  const [
+    promedios,
+    movimientosClientes,
+  ] = await Promise.all([
+    this.cuentasService
+      .obtenerPromediosCompraCuentasOperativas(),
 
-    /**
-     * ======================================
-     * CUENTAS BASE COP
-     * ======================================
-     */
+    this.prisma.movimientoCliente.findMany({
+      select: {
+        debitoCop: true,
+        creditoCop: true,
+      },
+    }),
+  ]);
 
-    const cuentasBaseResponse =
-      cuentasBase.map((cuenta) => ({
-        id: cuenta.id,
+  /**
+   * ======================================
+   * CUENTAS BASE COP
+   * ======================================
+   */
 
-        nombre: cuenta.nombre,
+  const cuentasBaseResponse =
+    cuentasBase.map((cuenta) => ({
+      id: cuenta.id,
+      nombre: cuenta.nombre,
+      moneda: cuenta.moneda,
+      tipo: cuenta.tipo,
+      saldo: Number(cuenta.saldo),
+      aplica4x1000:
+        cuenta.aplica4x1000,
+    }));
+
+  const disponibleCop =
+    this.redondearDosDecimales(
+      cuentasBaseResponse.reduce(
+        (total, cuenta) =>
+          total + cuenta.saldo,
+        0,
+      ),
+    );
+
+  /**
+   * ======================================
+   * CUENTAS OPERATIVAS
+   * ======================================
+   */
+
+  const cuentasOperativas =
+    promedios.map((cuenta) => {
+      const saldoActual =
+        Number(
+          cuenta.saldoActual ?? 0,
+        );
+
+      const saldoCalculado =
+        Number(
+          cuenta.saldoCalculado ?? 0,
+        );
+
+      const promedioCompra =
+        Number(
+          cuenta.promedioCompra ?? 0,
+        );
+
+      const valorActualCop =
+        this.redondearDosDecimales(
+          saldoActual *
+            promedioCompra,
+        );
+
+      const diferenciaSaldo =
+        this.redondearDosDecimales(
+          saldoActual -
+            saldoCalculado,
+        );
+
+      return {
+        id: cuenta.cuentaId,
+
+        nombre: cuenta.cuenta,
 
         moneda: cuenta.moneda,
 
-        tipo: cuenta.tipo,
+        saldoActual,
 
-        saldo: Number(cuenta.saldo),
+        saldoCalculado,
 
-        aplica4x1000:
-          cuenta.aplica4x1000,
-      }));
+        diferenciaSaldo,
 
-    /**
-     * Dinero líquido disponible actualmente
-     * en cuentas COP.
-     */
-    const disponibleCop =
-      this.redondearDosDecimales(
-        cuentasBaseResponse.reduce(
-          (total, cuenta) =>
-            total + cuenta.saldo,
-          0,
+        promedioCompra,
+
+        tasaMinimaVenta:
+          Number(
+            cuenta.tasaMinimaVenta ??
+              0,
+          ),
+
+        costoInventarioCalculadoCop:
+          Number(
+            cuenta.costoInventarioCop ??
+              0,
+          ),
+
+        valorActualCop,
+
+        totalOperacionesAnalizadas:
+          cuenta.totalOperacionesAnalizadas,
+      };
+    });
+
+  const inventarioDivisasCop =
+    this.redondearDosDecimales(
+      cuentasOperativas.reduce(
+        (total, cuenta) =>
+          total +
+          cuenta.valorActualCop,
+        0,
+      ),
+    );
+
+  /**
+   * ======================================
+   * CARTERA
+   * ======================================
+   *
+   * saldo cliente =
+   * débitos - créditos
+   *
+   * positivo = nos deben
+   * negativo = debemos
+   */
+
+  const totalDebitosCarteraCop =
+    movimientosClientes.reduce(
+      (total, movimiento) =>
+        total +
+        Number(
+          movimiento.debitoCop ??
+            0,
         ),
-      );
+      0,
+    );
 
-    /**
-     * ======================================
-     * CUENTAS OPERATIVAS
-     * ======================================
-     *
-     * IMPORTANTE:
-     *
-     * Para el dashboard valorizamos el saldo
-     * REAL actual de la cuenta usando el
-     * promedio de compra.
-     *
-     * saldoActual × promedioCompra
-     *
-     * No utilizamos directamente
-     * costoInventarioCop porque ese valor
-     * corresponde al saldo reconstruido
-     * desde operaciones.
-     */
-    const cuentasOperativas =
-      promedios.map((cuenta) => {
-        const saldoActual =
-          Number(cuenta.saldoActual ?? 0);
-
-        const saldoCalculado =
-          Number(cuenta.saldoCalculado ?? 0);
-
-        const promedioCompra =
-          Number(cuenta.promedioCompra ?? 0);
-
-        const valorActualCop =
-          this.redondearDosDecimales(
-            saldoActual *
-              promedioCompra,
-          );
-
-        const diferenciaSaldo =
-          this.redondearDosDecimales(
-            saldoActual -
-              saldoCalculado,
-          );
-
-        return {
-          id: cuenta.cuentaId,
-
-          nombre: cuenta.cuenta,
-
-          moneda: cuenta.moneda,
-
-          saldoActual,
-
-          saldoCalculado,
-
-          diferenciaSaldo,
-
-          promedioCompra,
-
-          tasaMinimaVenta:
-            Number(
-              cuenta.tasaMinimaVenta ?? 0,
-            ),
-
-          /**
-           * Costo calculado por el algoritmo
-           * FIFO/promedio móvil existente.
-           */
-          costoInventarioCalculadoCop:
-            Number(
-              cuenta.costoInventarioCop ??
-                0,
-            ),
-
-          /**
-           * Valor que realmente nos interesa
-           * para el dashboard:
-           *
-           * saldo físico actual × promedio.
-           */
-          valorActualCop,
-
-          totalOperacionesAnalizadas:
-            cuenta.totalOperacionesAnalizadas,
-        };
-      });
-
-    /**
-     * Valor total del dinero/divisas que
-     * actualmente queda en las cuentas
-     * operativas.
-     */
-    const inventarioDivisasCop =
-      this.redondearDosDecimales(
-        cuentasOperativas.reduce(
-          (total, cuenta) =>
-            total +
-            cuenta.valorActualCop,
-          0,
+  const totalCreditosCarteraCop =
+    movimientosClientes.reduce(
+      (total, movimiento) =>
+        total +
+        Number(
+          movimiento.creditoCop ??
+            0,
         ),
-      );
+      0,
+    );
 
-    /**
-     * ======================================
-     * CAPITAL OPERATIVO
-     * ======================================
-     *
-     * Dinero COP disponible
-     * +
-     * divisas valorizadas al costo promedio.
-     */
-    const capitalOperativoCop =
-      this.redondearDosDecimales(
-        disponibleCop +
-          inventarioDivisasCop,
-      );
+  const balanceNetoCarteraCop =
+    this.redondearDosDecimales(
+      totalDebitosCarteraCop -
+        totalCreditosCarteraCop,
+    );
 
-    return {
-      disponibleCop,
+  /**
+   * ======================================
+   * CAPITAL OPERATIVO
+   * ======================================
+   */
 
-      inventarioDivisasCop,
+  const capitalOperativoCop =
+    this.redondearDosDecimales(
+      disponibleCop +
+        inventarioDivisasCop +
+        balanceNetoCarteraCop,
+    );
 
-      capitalOperativoCop,
+  return {
+    disponibleCop,
 
-      resumen: {
-        cantidadCuentasBase:
-          cuentasBaseResponse.length,
+    inventarioDivisasCop,
 
-        cantidadCuentasOperativas:
-          cuentasOperativas.length,
-      },
+    balanceNetoCarteraCop,
 
-      cuentasBase:
-        cuentasBaseResponse,
+    capitalOperativoCop,
 
-      cuentasOperativas,
-    };
-  }
+    cartera: {
+      totalDebitosCop:
+        this.redondearDosDecimales(
+          totalDebitosCarteraCop,
+        ),
+
+      totalCreditosCop:
+        this.redondearDosDecimales(
+          totalCreditosCarteraCop,
+        ),
+
+      balanceNetoCop:
+        balanceNetoCarteraCop,
+    },
+
+    resumen: {
+      cantidadCuentasBase:
+        cuentasBaseResponse.length,
+
+      cantidadCuentasOperativas:
+        cuentasOperativas.length,
+    },
+
+    cuentasBase:
+      cuentasBaseResponse,
+
+    cuentasOperativas,
+  };
+}
 
   /**
    * ==========================================
