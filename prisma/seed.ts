@@ -31,7 +31,7 @@ async function main() {
     },
     create: {
       nombre: 'Administrador',
-      correo: 'admin@alcambio.com',
+      correo: 'test@mail.com',
       password: passwordHash,
       rol: 'ADMIN',
       estado: 'ACTIVO',
