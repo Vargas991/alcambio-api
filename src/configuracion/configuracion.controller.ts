@@ -54,7 +54,7 @@ export class ConfiguracionController {
   @Get('publica')
   async obtenerIdentidadPublica() {
     const data = await this.configuracionService.obtenerIdentidadPublica();
-    return successResponse(data,"Informacion publica.")
+    return successResponse(data, 'Informacion publica.');
   }
 
   @UseGuards(JwtAuthGuard)

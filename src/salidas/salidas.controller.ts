@@ -42,14 +42,14 @@ export class SalidasController {
 
   @Put(':id')
   async editar(@Param('id') id: string, @Body() dto: UpdateSalidaDto) {
-   const data = await this.salidasService.editar(id, dto);
-    return successResponse(data, "Salida editada Correctamente.")
+    const data = await this.salidasService.editar(id, dto);
+    return successResponse(data, 'Salida editada Correctamente.');
   }
 
   @Delete(':id')
   async eliminar(@Param('id') id: string) {
     const data = await this.salidasService.eliminar(id);
-    return successResponse(data, "Salidad eliminada correctamente.")
+    return successResponse(data, 'Salidad eliminada correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)

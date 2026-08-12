@@ -46,6 +46,16 @@ enum EstadoOperacion {
   CANCELADA
 }
 
+enum MetodoCalculoOperacion {
+  TASA
+  PORCENTAJE
+}
+
+enum AplicacionPorcentaje {
+  SUMAR
+  DESCONTAR
+}
+
 enum TipoEntrada {
   ABONO_CUENTA_PROPIA
   ABONO_DIRECTO_PROVEEDOR
@@ -129,6 +139,7 @@ model Cliente {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  @@index([nombre])
   @@map("clientes")
 }
 
@@ -138,10 +149,11 @@ model Cuenta {
   moneda    Moneda
   categoria CategoriaCuenta
   tipo      TipoCuenta
-  aplica4x1000 Boolean      @default(false)
-  saldo     Decimal         @default(0)
-  estado    EstadoEntidad   @default(ACTIVO)
-  notas     String?
+
+  aplica4x1000 Boolean       @default(false)
+  saldo        Decimal       @default(0) @db.Decimal(18, 6)
+  estado       EstadoEntidad @default(ACTIVO)
+  notas        String?
 
   movimientos MovimientoCuenta[]
   entradas    Entrada[]
@@ -151,6 +163,7 @@ model Cuenta {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  @@index([moneda, estado])
   @@map("cuentas")
 }
 
@@ -165,19 +178,39 @@ model Operacion {
   deudorId   String?
   acreedorId String?
 
+  // Monto principal de la operación.
   monedaTransaccion Moneda
-  montoTransaccion  Decimal
+  montoTransaccion  Decimal @db.Decimal(18, 6)
 
-  tasaCompra Decimal
-  tasaVenta  Decimal
+  // Método utilizado para calcular la operación.
+  metodoCalculo MetodoCalculoOperacion @default(TASA)
 
-  totalCompraCop Decimal
-  totalVentaCop  Decimal
-  utilidadCop    Decimal
+  // Campos utilizados cuando el método es PORCENTAJE.
+  porcentaje           Decimal?              @db.Decimal(8, 4)
+  aplicacionPorcentaje AplicacionPorcentaje?
+  montoComision        Decimal?              @db.Decimal(18, 6)
+  montoResultado       Decimal?              @db.Decimal(18, 6)
+
+  // Moneda y monto en los que nace la deuda.
+  monedaDeuda Moneda   @default(COP)
+  montoDeuda  Decimal? @db.Decimal(18, 6)
+
+  // Copia de la moneda base utilizada al registrar la operación.
+  monedaBaseHistorica Moneda @default(COP)
+
+  // Unidades de monedaTransaccion por una unidad de monedaDeuda.
+  tasaConversionBase Decimal? @db.Decimal(30, 16)
+
+  // Campos por tasa conservados por compatibilidad.
+  tasaCompra Decimal @db.Decimal(18, 8)
+  tasaVenta  Decimal @db.Decimal(18, 8)
+
+  totalCompraCop Decimal @db.Decimal(18, 6)
+  totalVentaCop  Decimal @db.Decimal(18, 6)
+  utilidadCop    Decimal @db.Decimal(18, 6)
 
   cuentaOperativaId String?
-
-  destinatario String?
+  destinatario      String?
 
   fechaOperacion DateTime @default(now())
   notas          String?
@@ -192,6 +225,9 @@ model Operacion {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  @@index([deudorId, fechaOperacion])
+  @@index([acreedorId, fechaOperacion])
+  @@index([monedaDeuda, estado])
   @@map("operaciones")
 }
 
@@ -205,7 +241,24 @@ model Entrada {
   acreedorId String?
   cuentaId   String?
 
-  montoCop Decimal
+  // Campo legado. Se conserva para compatibilidad con registros anteriores.
+  // Para nuevos abonos multimoneda puede mantenerse en 0.
+  montoCop Decimal @default(0) @db.Decimal(18, 6)
+
+  // Dinero recibido físicamente.
+  // monedaPago debe coincidir con la moneda de la cuenta receptora.
+  monedaPago Moneda  @default(COP)
+  montoPago  Decimal @default(0) @db.Decimal(18, 6)
+
+  monedaAplicacion Moneda  @default(COP)
+  montoAplicado    Decimal @default(0) @db.Decimal(18, 6)
+
+  // Convención fija:
+  // 1 unidad de monedaAplicacion = tasaConversion unidades de monedaPago.
+  // Ejemplo: 1 USD = 4.000 COP.
+  // montoAplicado = montoPago / tasaConversion.
+  // Debe ser null cuando monedaPago == monedaAplicacion.
+  tasaConversion Decimal? @db.Decimal(30, 16)
 
   descripcion String?
   referencia  String?
@@ -215,45 +268,60 @@ model Entrada {
   acreedor Cliente? @relation("EntradaAcreedor", fields: [acreedorId], references: [id])
   cuenta   Cuenta?  @relation(fields: [cuentaId], references: [id])
 
-  aplica4x1000           Boolean  @default(false)
-  impuesto4x1000Cop      Decimal  @default(0) @db.Decimal(18, 2)
-  montoAplicadoDeudaCop  Decimal? @db.Decimal(18, 2)
+  // Campos legados de 4x1000.
+  aplica4x1000          Boolean  @default(false)
+  impuesto4x1000Cop     Decimal  @default(0) @db.Decimal(18, 2)
+  montoAplicadoDeudaCop Decimal? @db.Decimal(18, 2)
 
-  proveedorCobra4x1000       Boolean  @default(false)
-  impuestoProveedor4x1000Cop Decimal  @default(0) @db.Decimal(18, 2)
-  montoNetoAcreedorCop       Decimal  @default(0) @db.Decimal(18, 2)
-  
+  proveedorCobra4x1000       Boolean @default(false)
+  impuestoProveedor4x1000Cop Decimal @default(0) @db.Decimal(18, 2)
+  montoNetoAcreedorCop       Decimal @default(0) @db.Decimal(18, 2)
+
   movimientosCliente MovimientoCliente[]
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  @@index([deudorId, creadoEn])
+  @@index([cuentaId, creadoEn])
+  @@index([monedaPago, monedaAplicacion])
   @@map("entradas")
 }
 
 model Salida {
   id String @id @default(uuid())
 
-  tipo TipoSalida
+  tipo   TipoSalida
+  estado EstadoSalida @default(REGISTRADA)
 
   acreedorId String?
   cuentaId   String
 
-  montoCop Decimal
+  // Campo legado.
+  montoCop Decimal @default(0) @db.Decimal(18, 6)
+
+  monedaPago Moneda  @default(COP)
+  montoPago  Decimal @default(0) @db.Decimal(18, 6)
+
+  monedaAplicacion Moneda  @default(COP)
+  montoAplicado    Decimal @default(0) @db.Decimal(18, 6)
+
+  // 1 unidad de monedaAplicacion =
+  // tasaConversion unidades de monedaPago.
+  tasaConversion Decimal? @db.Decimal(30, 16)
 
   descripcion String?
   referencia  String?
   notas       String?
 
-  montoBaseCop               Decimal @default(0)
+  // Campos legados.
+  montoBaseCop               Decimal @default(0) @db.Decimal(18, 6)
   proveedorCobra4x1000       Boolean @default(false)
-  impuestoProveedor4x1000Cop Decimal @default(0)
-  montoEnviadoCop            Decimal @default(0)
+  impuestoProveedor4x1000Cop Decimal @default(0) @db.Decimal(18, 2)
+  montoEnviadoCop            Decimal @default(0) @db.Decimal(18, 6)
   cuentaAplica4x1000         Boolean @default(false)
-  impuestoCuenta4x1000Cop    Decimal @default(0)
-  totalDebitadoCop           Decimal @default(0)
-
-  estado EstadoSalida @default(REGISTRADA)
+  impuestoCuenta4x1000Cop    Decimal @default(0) @db.Decimal(18, 2)
+  totalDebitadoCop           Decimal @default(0) @db.Decimal(18, 6)
 
   acreedor Cliente? @relation("SalidaAcreedor", fields: [acreedorId], references: [id])
   cuenta   Cuenta   @relation(fields: [cuentaId], references: [id])
@@ -263,6 +331,9 @@ model Salida {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  @@index([acreedorId, creadoEn])
+  @@index([cuentaId, creadoEn])
+  @@index([monedaPago, monedaAplicacion])
   @@map("salidas")
 }
 
@@ -272,11 +343,12 @@ model MovimientoCuenta {
   cuentaId String
   tipo     TipoMovimientoCuenta
 
-  monto  Decimal
+  // Movimiento físico en la moneda propia de la cuenta.
+  monto  Decimal @db.Decimal(18, 6)
   moneda Moneda
 
-  saldoAnterior Decimal?
-  saldoNuevo    Decimal?
+  saldoAnterior Decimal? @db.Decimal(18, 6)
+  saldoNuevo    Decimal? @db.Decimal(18, 6)
 
   descripcion    String?
   referenciaTipo String?
@@ -286,6 +358,8 @@ model MovimientoCuenta {
 
   creadoEn DateTime @default(now())
 
+  @@index([cuentaId, creadoEn])
+  @@index([referenciaTipo, referenciaId])
   @@map("movimientos_cuentas")
 }
 
@@ -299,11 +373,24 @@ model MovimientoCliente {
   entradaId   String?
   salidaId    String?
 
+  // Datos físicos/originales de la transacción.
   monedaTransaccion Moneda?
-  montoTransaccion  Decimal?
+  montoTransaccion  Decimal? @db.Decimal(18, 6)
 
-  debitoCop  Decimal @default(0)
-  creditoCop Decimal @default(0)
+  // Campos legados COP.
+  debitoCop  Decimal @default(0) @db.Decimal(18, 6)
+  creditoCop Decimal @default(0) @db.Decimal(18, 6)
+
+  // Efecto contable real sobre el saldo del cliente.
+  // El saldo por moneda se calcula como SUM(debito - credito).
+  moneda  Moneda  @default(COP)
+  debito  Decimal @default(0) @db.Decimal(18, 6)
+  credito Decimal @default(0) @db.Decimal(18, 6)
+
+  // Valores opcionales de auditoría para evitar recalcular el saldo
+  // inmediatamente anterior y posterior al movimiento.
+  saldoAnterior Decimal? @db.Decimal(18, 6)
+  saldoNuevo    Decimal? @db.Decimal(18, 6)
 
   descripcion String?
 
@@ -314,18 +401,26 @@ model MovimientoCliente {
 
   creadoEn DateTime @default(now())
 
+  @@index([clienteId, moneda, creadoEn])
+  @@index([entradaId])
+  @@index([salidaId])
+  @@index([operacionId])
   @@map("movimientos_clientes")
 }
 
 model ConfiguracionOrganizacion {
-  id             String   @id @default(uuid())
-  nombre         String
-  logoUrl        String?
-  telefono       String?
-  correo         String?
-  direccion      String?
-  monedaBase     Moneda   @default(COP)
-  zonaHoraria    String   @default("America/Caracas")
-  creadoEn       DateTime @default(now())
-  actualizadoEn  DateTime @updatedAt
+  id        String  @id @default(uuid())
+  nombre    String
+  logoUrl   String?
+  telefono  String?
+  correo    String?
+  direccion String?
+
+  // Moneda predeterminada para operaciones, deudas y dashboard.
+  monedaBase Moneda @default(COP)
+
+  zonaHoraria String @default("America/Caracas")
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
 }

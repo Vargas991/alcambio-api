@@ -8,37 +8,80 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
-import { TipoSalida } from '../../../generated/prisma/client';
+import { Moneda, TipoSalida } from '../../../generated/prisma/client';
 
 export class CreateSalidaDto {
   @IsEnum(TipoSalida)
   tipo!: TipoSalida;
 
-  @ValidateIf((dto) => dto.tipo === TipoSalida.PAGO_ACREEDOR)
-  @IsString()
-  @IsNotEmpty()
-  acreedorId?: string;
-
+  /**
+   * Cuenta de donde realmente sale el dinero.
+   *
+   * Su moneda define monedaPago en backend.
+   */
   @IsString()
   @IsNotEmpty()
   cuentaId!: string;
 
   /**
-   * Monto base que se quiere pagar.
-   * Ejemplo: quiero pagar 1.000.000 al proveedor.
+   * Requerido únicamente en PAGO_ACREEDOR.
    */
-  @IsNumber()
-  @Min(1)
-  montoCop!: number;
+  @ValidateIf((dto: CreateSalidaDto) => dto.tipo === TipoSalida.PAGO_ACREEDOR)
+  @IsString()
+  @IsNotEmpty()
+  acreedorId?: string;
 
   /**
-   * Indica si el proveedor cobra 4x1000.
-   * Si true:
-   * montoEnviado = montoCop + 4x1000 proveedor
+   * Monto BASE expresado en la moneda
+   * de la cuenta origen.
    *
-   * El 4x1000 de la cuenta propia NO viene aquí.
-   * Se calcula según cuenta.aplica4x1000.
+   * No incluye 4x1000.
+   *
+   * Ej:
+   * cuenta COP -> 320000
+   * cuenta USD -> 100
+   */
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.000001)
+  montoPago!: number;
+
+  /**
+   * Moneda de la deuda que se desea reducir.
+   *
+   * Solo es obligatoria para PAGO_ACREEDOR.
+   *
+   * Para GASTO / RETIRO el backend utiliza
+   * automáticamente la moneda de la cuenta.
+   */
+  @ValidateIf((dto: CreateSalidaDto) => dto.tipo === TipoSalida.PAGO_ACREEDOR)
+  @IsEnum(Moneda)
+  monedaAplicacion?: Moneda;
+
+  /**
+   * Convención interna:
+   *
+   * 1 monedaAplicacion =
+   * tasaConversion monedaPago
+   *
+   * Ej:
+   * deuda USD + cuenta COP
+   * 1 USD = 3200 COP
+   * tasaConversion = 3200
+   *
+   * El frontend puede mostrar otra convención
+   * más natural y convertirla antes de enviar.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.00000001)
+  tasaConversion?: number;
+
+  /**
+   * Solo tiene efecto si la cuenta origen es COP.
    */
   @IsOptional()
   @IsBoolean()
@@ -55,4 +98,18 @@ export class CreateSalidaDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  /**
+   * Campo legacy.
+   *
+   * Se deja temporalmente para que payloads
+   * antiguos no rompan ValidationPipe si usa
+   * whitelist/forbidNonWhitelisted.
+   *
+   * El nuevo servicio NO lo utiliza.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  montoCop?: number;
 }

@@ -1,14 +1,17 @@
-import {
-  IsNotEmpty,
-  IsNumber,
-  IsString,
-} from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEnum, IsNotEmpty, IsNumber, IsString } from 'class-validator';
+
+import { Moneda } from '../../../generated/prisma/client';
 
 export class AjustarSaldoClienteDto {
+  @IsEnum(Moneda)
+  moneda!: Moneda;
+
+  @Type(() => Number)
   @IsNumber()
-  saldoObjetivoCop: number;
+  saldoObjetivo!: number;
 
   @IsString()
   @IsNotEmpty()
-  motivo: string;
+  motivo!: string;
 }

@@ -1,5 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { ConfiguracionService } from 'src/configuracion/configuracion.service';
+
+type BalanceMonedaPdf = {
+  moneda: string;
+  totalDebitos: number;
+  totalCreditos: number;
+  saldo: number;
+  estado: string;
+};
 
 type LedgerClientePdfData = {
   cliente: {
@@ -9,22 +20,26 @@ type LedgerClientePdfData = {
     telefono?: string | null;
     estado: string;
   };
+
   filtros: {
     desde: string | null;
     hasta: string | null;
     tipo: string | null;
+    estado?: string | null;
+    tipoMov?: string | null;
     moneda: string | null;
-  };
-  resumen: {
-    totalDebitosCop: number;
-    totalCreditosCop: number;
-    saldoFiltradoCop: number;
-    estado: string;
 
-    totalDebitosGlobalCop?: number;
-    totalCreditosGlobalCop?: number;
-    saldoTotalCop?: number;
-    estadoTotal?: string;
+    /**
+     * TASA | PORCENTAJE.
+     * Se acepta PROMEDIO como alias temporal de PORCENTAJE
+     * para no romper llamadas antiguas del frontend.
+     */
+    metodoCalculo?: string | null;
+  };
+
+  resumen: {
+    balancesFiltrados: BalanceMonedaPdf[];
+    balancesGlobales: BalanceMonedaPdf[];
 
     totalUtilidadRealCop?: number;
     utilidadPorDia?: {
@@ -36,36 +51,71 @@ type LedgerClientePdfData = {
   movimientos: Array<{
     id: string;
     tipo: string;
+
+    moneda?: string | null;
+    debito?: unknown;
+    credito?: unknown;
+
     monedaTransaccion?: string | null;
     montoTransaccion?: unknown;
-    debitoCop: unknown;
-    creditoCop: unknown;
+
+    /**
+     * Campos legados. Se conservan como fallback
+     * para movimientos históricos.
+     */
+    debitoCop?: unknown;
+    creditoCop?: unknown;
+
     descripcion?: string | null;
     creadoEn: Date | string;
     utilidadRealCop?: number;
-    saldoAcumuladoCop?: number;
+
     operacion?: {
       codigo: string;
       nombre: string;
       tipo: string;
+
+      metodoCalculo?: string | null;
+
       tasaCompra?: unknown;
       tasaVenta?: unknown;
+
+      porcentaje?: unknown;
+      aplicacionPorcentaje?: string | null;
+      montoComision?: unknown;
+      montoResultado?: unknown;
+
+      monedaDeuda?: string | null;
+      montoDeuda?: unknown;
+
       utilidadCop?: unknown;
       destinatario?: string | null;
       notas?: string | null;
     } | null;
+
     entrada?: {
       tipo: string;
       referencia?: string | null;
       descripcion?: string | null;
       notas?: string | null;
+      monedaPago?: string | null;
+      montoPago?: unknown;
+      monedaAplicacion?: string | null;
+      montoAplicado?: unknown;
+      tasaConversion?: unknown;
     } | null;
+
     salida?: {
       tipo: string;
       referencia?: string | null;
       descripcion?: string | null;
       notas?: string | null;
       montoCop?: unknown;
+      monedaPago?: string | null;
+      montoPago?: unknown;
+      monedaAplicacion?: string | null;
+      montoAplicado?: unknown;
+      tasaConversion?: unknown;
       cuenta?: {
         id: string;
         nombre: string;
@@ -82,6 +132,19 @@ type TableColumn = {
   align: 'left' | 'center' | 'right';
 };
 
+type MovimientoConversionPdf = {
+  monedaPago?: string | null;
+  montoPago?: unknown;
+  monedaAplicacion?: string | null;
+  montoAplicado?: unknown;
+  tasaConversion?: unknown;
+};
+
+type ParTasaVisible = {
+  base: string;
+  quote: string;
+};
+
 const TIPO_COLORS: Record<string, string> = {
   VENTA: '#DCFCE7', // green-100
   COMPRA: '#FEE2E2', // red-100
@@ -94,9 +157,29 @@ const TIPO_COLORS: Record<string, string> = {
   CANCELACIÓN: '#F3F4F6', // gray-100
 };
 
+/**
+ * ==========================================
+ * MEMBRETE DE LA ORGANIZACIÓN
+ * ==========================================
+ *
+ * Variables opcionales:
+ *
+ * ORGANIZATION_NAME="Nombre de la organización"
+ * ORGANIZATION_LOGO_PATH="/ruta/absoluta/logo.png"
+ *
+ * Si no se define ORGANIZATION_LOGO_PATH,
+ * se buscará public/logo.png.
+ */
+const ORGANIZATION_NAME =
+  process.env.ORGANIZATION_NAME ?? 'Nombre de la organización';
+
 @Injectable()
 export class ClienteLedgerPdfService {
+  constructor(private readonly configuracionService: ConfiguracionService) {}
+
   async generate(ledger: LedgerClientePdfData): Promise<Buffer> {
+    const configuracion = await this.configuracionService.obtenerOrganizacion();
+
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({
         size: 'A4',
@@ -111,52 +194,147 @@ export class ClienteLedgerPdfService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      this.drawHeader(doc, ledger);
+      this.drawHeader(doc, ledger, configuracion);
       this.drawResumen(doc, ledger);
-      this.drawMovimientos(doc, ledger);
+      this.drawMovimientos(doc, ledger, configuracion.zonaHoraria);
       this.drawFooter(doc);
 
       doc.end();
     });
   }
 
-  private drawHeader(doc: PDFKit.PDFDocument, ledger: LedgerClientePdfData) {
+  private drawHeader(
+    doc: PDFKit.PDFDocument,
+    ledger: LedgerClientePdfData,
+    configuracion?: {
+      nombre: string;
+      logoUrl?: string | null;
+      zonaHoraria: string;
+    },
+  ) {
+    /**
+     * ==========================================
+     * MEMBRETE
+     * ==========================================
+     */
+    const headerTop = 20;
+    const logoWidth = 80;
+    const logoHeight = 60;
+    const organizationTextX = logoWidth + 50;
+
+    const logoPath = configuracion?.logoUrl
+      ? join(process.cwd(), configuracion?.logoUrl?.replace(/^\/+/, ''))
+      : null;
+    console.log('path: ', logoPath);
+
+    if (logoPath && existsSync(logoPath)) {
+      try {
+        doc.image(logoPath, 50, headerTop, {
+          fit: [logoWidth, logoHeight],
+          // 'align' option is not accepted by the PDFKit TypeScript defs here,
+          // so omit it to avoid a type error. Position is set by the x,y args above.
+        });
+      } catch {
+        // Si el logo falla, el PDF continúa con el nombre.
+      }
+    }
+
     doc
-      .fontSize(16)
+      .fontSize(12)
       .font('Helvetica-Bold')
-      .text('Estado de Cuenta del Cliente', 30, 25, {
+      .fillColor('#111827')
+      .text(
+        configuracion?.nombre ?? ORGANIZATION_NAME,
+        organizationTextX,
+        headerTop + logoHeight / 2,
+        {
+          width: 790 - organizationTextX,
+          // align: 'right',
+        },
+      );
+
+    doc
+      .save()
+      .strokeColor('#D1D5DB')
+      // .lineWidth(0.8)
+      .moveTo(30, 63)
+      // .lineTo(790, 63)
+      .stroke()
+      .restore();
+
+    /**
+     * Título principal.
+     */
+    doc
+      .fontSize(14)
+      .font('Helvetica-Bold')
+      .fillColor('#000000')
+      .text('Estado de Cuenta del Cliente', 30, 74, {
+        width: 760,
         align: 'center',
       });
 
-    doc.moveDown(0.4);
+    /**
+     * Nombre del cliente:
+     * tamaño intermedio entre título y fecha.
+     */
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .fillColor('#374151')
+      .text(ledger.cliente.nombre, 30, 97, {
+        width: 760,
+        align: 'center',
+      });
 
     doc
       .fontSize(8)
       .font('Helvetica')
-      .text(`Generado: ${this.formatDateTime(new Date())}`, {
-        align: 'center',
-      });
+      .fillColor('#4B5563')
+      .text(
+        `Generado: ${this.formatDateTime(
+          new Date(),
+          configuracion?.zonaHoraria,
+        )}`,
+        30,
+        115,
+        {
+          width: 760,
+          align: 'center',
+        },
+      );
 
-    doc.moveDown(0.8);
+    doc.y = 139;
 
+    /**
+     * Datos complementarios del cliente.
+     * El nombre ya está destacado arriba.
+     */
     const yCliente = doc.y;
 
     doc
       .fontSize(8)
       .font('Helvetica-Bold')
-      .text('Cliente:', 30, yCliente, { continued: true })
+      .fillColor('#000000')
+      .text('Documento:', 30, yCliente, {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.cliente.nombre}`, { continued: true })
+      .text(` ${ledger.cliente.documento ?? 'N/A'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Documento:', { continued: true })
+      .text('   Teléfono:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.cliente.documento ?? 'N/A'}`, { continued: true })
+      .text(` ${ledger.cliente.telefono ?? 'N/A'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Teléfono:', { continued: true })
-      .font('Helvetica')
-      .text(` ${ledger.cliente.telefono ?? 'N/A'}`, { continued: true })
-      .font('Helvetica-Bold')
-      .text('   Estado:', { continued: true })
+      .text('   Estado:', {
+        continued: true,
+      })
       .font('Helvetica')
       .text(` ${ledger.cliente.estado}`);
 
@@ -165,59 +343,103 @@ export class ClienteLedgerPdfService {
     doc
       .fontSize(8)
       .font('Helvetica-Bold')
-      .text('Desde:', 30, doc.y, { continued: true })
+      .text('Desde:', 30, doc.y, {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.desde ?? 'Sin filtro'}`, { continued: true })
+      .text(` ${ledger.filtros.desde ?? 'Sin filtro'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Hasta:', { continued: true })
+      .text('   Hasta:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.hasta ?? 'Sin filtro'}`, { continued: true })
+      .text(` ${ledger.filtros.hasta ?? 'Sin filtro'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Tipo:', { continued: true })
+      .text('   Tipo:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.tipo ?? 'Todos'}`, { continued: true })
+      .text(` ${ledger.filtros.tipo ?? 'Todos'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Moneda:', { continued: true })
+      .text('   Moneda:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.moneda ?? 'Todas'}`);
+      .text(` ${ledger.filtros.moneda ?? 'Todas'}`, {
+        continued: true,
+      })
+      .font('Helvetica-Bold')
+      .text('   Método:', {
+        continued: true,
+      })
+      .font('Helvetica')
+      .text(` ${this.getMetodoFiltroTexto(ledger.filtros.metodoCalculo)}`);
 
     doc.moveDown(0.7);
 
     this.drawLine(doc);
   }
 
-  private getSaldoPeriodoTexto(saldo: number) {
+  private getSaldoPeriodoTexto(saldo: number, moneda: string) {
     if (saldo > 0) {
-      return `Saldo del período: ${this.money(saldo)} COP por cobrar`;
+      return `${this.money(saldo)} ${moneda} por cobrar`;
     }
 
     if (saldo < 0) {
-      return `Saldo del período: ${this.money(Math.abs(saldo))} COP a favor`;
+      return `${this.money(Math.abs(saldo))} ${moneda} a favor`;
     }
 
-    return 'Saldo del período: saldado';
+    return `Saldado en ${moneda}`;
   }
 
   private drawResumen(doc: PDFKit.PDFDocument, ledger: LedgerClientePdfData) {
-    const { resumen } = ledger;
-
-    const saldoPeriodoTexto = this.getSaldoPeriodoTexto(
-      resumen.saldoFiltradoCop,
-    );
+    const balances = this.getBalancesVisibles(ledger);
 
     doc
       .fontSize(9)
       .font('Helvetica-Bold')
-      .text('Resumen del período:', 30, doc.y, { continued: true })
-      .font('Helvetica')
-      .text(` Débitos: ${this.money(resumen.totalDebitosCop)} COP`, {
-        continued: true,
-      })
-      .text(`   Abonos: ${this.money(resumen.totalCreditosCop)} COP`, {
-        continued: true,
-      })
-      .font('Helvetica-Bold')
-      .text(`   ${saldoPeriodoTexto}`);
+      .text('Resumen del período:', 30, doc.y);
+
+    if (balances.length === 0) {
+      doc
+        .fontSize(8)
+        .font('Helvetica')
+        .text('Sin movimientos para los filtros seleccionados.', 30, doc.y + 4);
+
+      doc.moveDown(1.2);
+      return;
+    }
+
+    for (const balance of balances) {
+      doc
+        .fontSize(8)
+        .font('Helvetica-Bold')
+        .text(`${balance.moneda}:`, 30, doc.y + 3, {
+          continued: true,
+        })
+        .font('Helvetica')
+        .text(
+          ` Débitos: ${this.money(balance.totalDebitos)} ${balance.moneda}`,
+          { continued: true },
+        )
+        .text(
+          `   Abonos: ${this.money(balance.totalCreditos)} ${balance.moneda}`,
+          { continued: true },
+        )
+        .font('Helvetica-Bold')
+        .text(
+          `   Saldo: ${this.getSaldoPeriodoTexto(
+            balance.saldo,
+            balance.moneda,
+          )}`,
+        );
+    }
 
     doc.moveDown(0.8);
   }
@@ -225,16 +447,28 @@ export class ClienteLedgerPdfService {
   private drawMovimientos(
     doc: PDFKit.PDFDocument,
     ledger: LedgerClientePdfData,
+    timeZone: string,
   ) {
+    const metodoFiltro = this.normalizarMetodoCalculo(
+      ledger.filtros.metodoCalculo,
+    );
+
+    const tituloCalculo =
+      metodoFiltro === 'PORCENTAJE'
+        ? '%'
+        : metodoFiltro === 'TASA'
+          ? 'Tasa'
+          : 'Tasa / %';
+
     const columns: TableColumn[] = [
-      { title: 'Fecha', x: 30, width: 70, align: 'left' },
-      { title: 'Tipo', x: 100, width: 90, align: 'center' },
-      { title: 'Concepto', x: 190, width: 260, align: 'left' },
-      { title: 'Monto', x: 450, width: 80, align: 'right' },
-      { title: 'Tasa', x: 530, width: 65, align: 'right' },
-      { title: 'Debe COP', x: 595, width: 70, align: 'right' },
-      { title: 'Abono COP', x: 665, width: 75, align: 'right' },
-      { title: 'Saldo COP', x: 740, width: 50, align: 'right' },
+      { title: 'Fecha', x: 30, width: 65, align: 'left' },
+      { title: 'Tipo', x: 95, width: 80, align: 'center' },
+      { title: 'Concepto', x: 175, width: 220, align: 'left' },
+      { title: 'Monto', x: 395, width: 90, align: 'right' },
+      { title: tituloCalculo, x: 485, width: 75, align: 'right' },
+      { title: 'Debe', x: 560, width: 75, align: 'right' },
+      { title: 'Abono', x: 635, width: 75, align: 'right' },
+      { title: 'Saldo', x: 710, width: 80, align: 'right' },
     ];
 
     let y = doc.y;
@@ -242,14 +476,33 @@ export class ClienteLedgerPdfService {
     this.drawTableHeader(doc, y, columns);
     y += 22;
 
-    const movimientosAsc = [...ledger.movimientos].sort(
-      (a, b) => new Date(a.creadoEn).getTime() - new Date(b.creadoEn).getTime(),
-    );
+    const movimientosAsc = [...ledger.movimientos]
+      .filter((mov) => this.isMovimientoVisibleEnPdf(mov))
+      .filter((mov) => {
+        if (!metodoFiltro) {
+          return true;
+        }
 
-    let totalMonto = 0;
-    let totalDebitos = 0;
-    let totalCreditos = 0;
-    let ultimoSaldo = 0;
+        /**
+         * Cuando se filtra por método solo se muestran
+         * movimientos pertenecientes a operaciones.
+         * Abonos, pagos y ajustes no tienen metodoCalculo.
+         */
+        return (
+          this.normalizarMetodoCalculo(mov.operacion?.metodoCalculo) ===
+          metodoFiltro
+        );
+      })
+      .sort(
+        (a, b) =>
+          new Date(a.creadoEn).getTime() - new Date(b.creadoEn).getTime(),
+      );
+
+    /**
+     * El saldo se acumula de forma independiente por moneda.
+     * Nunca se suman COP + USD + BS + USDT.
+     */
+    const saldosPorMoneda = new Map<string, number>();
 
     for (const mov of movimientosAsc) {
       if (y > 520) {
@@ -259,31 +512,38 @@ export class ClienteLedgerPdfService {
         y += 22;
       }
 
-      const monto = Number(mov.montoTransaccion ?? 0);
-      const debito = Number(mov.debitoCop ?? 0);
-      const credito = Number(mov.creditoCop ?? 0);
-      const saldo = Number(mov.saldoAcumuladoCop ?? 0);
+      const moneda =
+        mov.moneda ??
+        mov.operacion?.monedaDeuda ??
+        ledger.filtros.moneda ??
+        'COP';
 
-      totalMonto += monto;
-      totalDebitos += debito;
-      totalCreditos += credito;
-      ultimoSaldo = saldo;
+      const monto = Number(mov.montoTransaccion ?? 0);
+
+      const debito = this.getDebitoMovimiento(mov);
+      const credito = this.getCreditoMovimiento(mov);
+
+      const saldoAnterior = saldosPorMoneda.get(moneda) ?? 0;
+
+      const saldo = saldoAnterior + debito - credito;
+
+      saldosPorMoneda.set(moneda, saldo);
 
       const tipoVisual = this.getTipoVisual(mov);
       const tipoColor = this.getTipoColor(tipoVisual);
       const saldoColor = this.getSaldoColor(saldo);
 
+      const monedaMonto = mov.monedaTransaccion ?? moneda;
+
       const row = {
-        fecha: this.formatDateShort(mov.creadoEn),
-        // referencia: this.getReferencia(mov),
+        fecha: this.formatDateShort(mov.creadoEn, timeZone),
         tipo: tipoVisual,
         concepto: this.getConceptoCliente(mov),
-        // moneda: mov.monedaTransaccion ?? '-',
-        monto: `${mov.monedaTransaccion} ${this.money(monto)}`,
-        tasa: this.getTasaVisible(mov),
-        debito: this.money(debito),
-        credito: this.money(credito),
-        saldo: this.money(saldo),
+        monto: `${monedaMonto} ${this.money(monto)}`,
+        calculo: this.getCalculoVisible(mov),
+        debito: `${this.money(debito)} ${moneda}`,
+        credito: `${this.money(credito)} ${moneda}`,
+        saldo: `${this.money(saldo)} ${moneda}`,
       };
 
       this.drawTableRow(
@@ -295,7 +555,7 @@ export class ClienteLedgerPdfService {
           row.tipo,
           row.concepto,
           row.monto,
-          row.tasa,
+          row.calculo,
           row.debito,
           row.credito,
           row.saldo,
@@ -309,13 +569,58 @@ export class ClienteLedgerPdfService {
       y += 20;
     }
 
-    this.drawTotalsRow(doc, y, columns, {
-      totalMonto,
-      totalDebitos,
-      totalCreditos,
-      saldoPeriodo: ledger.resumen.saldoFiltradoCop,
-      saldoTotalReal: ledger.resumen.saldoTotalCop,
-    });
+    if (movimientosAsc.length === 0) {
+      doc
+        .fontSize(8)
+        .font('Helvetica')
+        .text('No hay movimientos para los filtros seleccionados.', 30, y + 8);
+
+      return;
+    }
+
+    /**
+     * ==========================================
+     * TOTALES POR MONEDA
+     * ==========================================
+     *
+     * balancesFiltrados:
+     * - suma de débitos del período/filtros
+     * - suma de créditos del período/filtros
+     * - saldo resultante del período/filtros
+     *
+     * balancesGlobales:
+     * - saldo TOTAL REAL del cliente en esa moneda,
+     *   sin verse afectado por los filtros del PDF.
+     *
+     * Las sumatorias se colocan exactamente debajo
+     * de las columnas Debe y Abono.
+     */
+    y += 4;
+
+    for (const balance of this.getBalancesVisibles(ledger)) {
+      if (y > 520) {
+        doc.addPage();
+        y = 35;
+        this.drawTableHeader(doc, y, columns);
+        y += 22;
+      }
+
+      const balanceGlobal = ledger.resumen.balancesGlobales?.find(
+        (item) => item.moneda === balance.moneda,
+      );
+
+      const saldoTotalReal = Number(balanceGlobal?.saldo ?? balance.saldo);
+
+      this.drawTotalsRow(doc, y, columns, {
+        moneda: balance.moneda,
+        totalDebitos: balance.totalDebitos,
+        totalCreditos: balance.totalCreditos,
+        saldoPeriodo: balance.saldo,
+        saldoTotalReal,
+      });
+
+      y += 46;
+    }
   }
 
   private drawTableHeader(
@@ -375,7 +680,7 @@ export class ClienteLedgerPdfService {
         doc.rect(column.x, y, column.width, height).stroke();
       }
 
-      // Columna Saldo COP
+      // Columna Saldo
       if (index === 7 && options?.saldoColor) {
         doc
           .save()
@@ -407,11 +712,11 @@ export class ClienteLedgerPdfService {
     y: number,
     columns: TableColumn[],
     totals: {
-      totalMonto: number;
+      moneda: string;
       totalDebitos: number;
       totalCreditos: number;
       saldoPeriodo: number;
-      saldoTotalReal?: number;
+      saldoTotalReal: number;
     },
   ) {
     const height = 22;
@@ -423,6 +728,7 @@ export class ClienteLedgerPdfService {
       yPosition: number,
       label: string,
       backgroundColor: string,
+      fontSize = 7.5,
     ) => {
       doc
         .save()
@@ -434,7 +740,7 @@ export class ClienteLedgerPdfService {
       doc.rect(labelX, yPosition, labelWidth, height).stroke();
 
       doc
-        .fontSize(7.5)
+        .fontSize(fontSize)
         .font('Helvetica-Bold')
         .fillColor('#000000')
         .text(label, labelX + 4, yPosition + 7, {
@@ -448,6 +754,7 @@ export class ClienteLedgerPdfService {
       yPosition: number,
       value: string,
       backgroundColor: string,
+      fontSize = 7.5,
     ) => {
       const column = columns[columnIndex];
 
@@ -461,7 +768,7 @@ export class ClienteLedgerPdfService {
       doc.rect(column.x, yPosition, column.width, height).stroke();
 
       doc
-        .fontSize(7.5)
+        .fontSize(fontSize)
         .font('Helvetica-Bold')
         .fillColor('#000000')
         .text(value, column.x + 3, yPosition + 7, {
@@ -471,40 +778,97 @@ export class ClienteLedgerPdfService {
     };
 
     /**
-     * Fila 1: Totales del período
+     * ==========================================
+     * FILA 1 — TOTALES DEL PERÍODO FILTRADO
+     * ==========================================
+     *
+     * Débitos y abonos se muestran debajo de
+     * sus columnas respectivas.
      */
-    drawMergedLabelCell(y, 'TOTALES DEL PERÍODO', '#F3F4F6');
+    drawMergedLabelCell(y, `TOTALES ${totals.moneda}`, '#F3F4F6');
 
-    drawCell(3, y, '-', '#F3F4F6');
+    drawCell(3, y, '', '#F3F4F6');
+
     drawCell(4, y, '', '#F3F4F6');
-    drawCell(5, y, this.money(totals.totalDebitos), '#F3F4F6');
-    drawCell(6, y, this.money(totals.totalCreditos), '#F3F4F6');
-    drawCell(7, y, this.money(totals.saldoPeriodo), '#F3F4F6');
+
+    drawCell(
+      5,
+      y,
+      `${this.money(totals.totalDebitos)} ${totals.moneda}`,
+      '#F3F4F6',
+    );
+
+    drawCell(
+      6,
+      y,
+      `${this.money(totals.totalCreditos)} ${totals.moneda}`,
+      '#F3F4F6',
+    );
+
+    drawCell(
+      7,
+      y,
+      `${this.money(totals.saldoPeriodo)} ${totals.moneda}`,
+      this.getSaldoColor(totals.saldoPeriodo),
+    );
 
     /**
-     * Fila 2: Saldo total real
+     * ==========================================
+     * FILA 2 — SALDO TOTAL REAL
+     * ==========================================
+     *
+     * Va debajo de la fila filtrada, NO como
+     * una columna adicional.
+     *
+     * Se dibuja un punto más grande:
+     * 8.5 pt frente a 7.5 pt.
      */
-    const saldoTotalReal =
-      totals.saldoTotalReal === undefined
-        ? totals.saldoPeriodo
-        : totals.saldoTotalReal;
-
     const ySaldoReal = y + height;
 
-    drawMergedLabelCell(ySaldoReal, 'SALDO TOTAL REAL', '#E5E7EB');
+    drawMergedLabelCell(ySaldoReal, 'SALDO TOTAL REAL', '#E5E7EB', 8.5);
 
-    drawCell(3, ySaldoReal, '', '#E5E7EB');
-    drawCell(4, ySaldoReal, '', '#E5E7EB');
-    drawCell(5, ySaldoReal, '', '#E5E7EB');
-    drawCell(6, ySaldoReal, '', '#E5E7EB');
+    drawCell(3, ySaldoReal, '', '#E5E7EB', 8.5);
+
+    drawCell(4, ySaldoReal, '', '#E5E7EB', 8.5);
+
+    drawCell(5, ySaldoReal, '', '#E5E7EB', 8.5);
+
+    drawCell(6, ySaldoReal, '', '#E5E7EB', 8.5);
+
     drawCell(
       7,
       ySaldoReal,
-      this.money(saldoTotalReal),
-      this.getSaldoColor(saldoTotalReal),
+      `${this.money(totals.saldoTotalReal)} ${totals.moneda}`,
+      this.getSaldoColor(totals.saldoTotalReal),
+      8.5,
     );
 
     doc.fillColor('#000000');
+  }
+
+  private getBalancesVisibles(
+    ledger: LedgerClientePdfData,
+  ): BalanceMonedaPdf[] {
+    const balances = ledger.resumen.balancesFiltrados ?? [];
+
+    if (ledger.filtros.moneda) {
+      return balances.filter(
+        (balance) => balance.moneda === ledger.filtros.moneda,
+      );
+    }
+
+    return balances.filter(
+      (balance) =>
+        balance.totalDebitos !== 0 ||
+        balance.totalCreditos !== 0 ||
+        balance.saldo !== 0,
+    );
+  }
+
+  private isMovimientoVisibleEnPdf(
+    mov: LedgerClientePdfData['movimientos'][number],
+  ) {
+    return mov.tipo !== 'AJUSTE';
   }
 
   private drawFooter(doc: PDFKit.PDFDocument) {
@@ -513,13 +877,24 @@ export class ClienteLedgerPdfService {
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
 
-      doc
-        .fontSize(7)
-        .font('Helvetica')
-        .text(`Página ${i + 1} de ${range.count}`, 30, doc.page.height - 25, {
-          align: 'center',
-          width: doc.page.width - 60,
-        });
+      const text = `Página ${i + 1} de ${range.count}`;
+
+      doc.fontSize(7).font('Helvetica').fillColor('#6B7280');
+
+      const textWidth = doc.widthOfString(text);
+
+      const x = (doc.page.width - textWidth) / 2;
+
+      /**
+       * Se dibuja dentro del margen inferior,
+       * pero sin usar un width que provoque
+       * wrapping / salto automático.
+       */
+      const y = doc.page.height - 20;
+
+      doc.text(text, x, y, {
+        lineBreak: false,
+      });
     }
   }
 
@@ -549,7 +924,7 @@ export class ClienteLedgerPdfService {
       }
 
       if (mov.operacion.tipo === 'OPERACION_DIRECTA') {
-        return 'DIRECTA';
+        return 'OP. DIRECTA';
       }
 
       return mov.operacion.tipo;
@@ -557,11 +932,11 @@ export class ClienteLedgerPdfService {
 
     if (mov.entrada) {
       if (mov.entrada.tipo === 'ABONO_CUENTA_PROPIA') {
-        return 'ABONO';
+        return 'ABONO CP';
       }
 
       if (mov.entrada.tipo === 'ABONO_DIRECTO_PROVEEDOR') {
-        return 'ABONO DIRECTO';
+        return 'ABONO DIRECTO PRO';
       }
 
       return mov.entrada.tipo;
@@ -662,7 +1037,7 @@ export class ClienteLedgerPdfService {
       let concepto = '';
 
       if (mov.salida.tipo === 'PAGO_ACREEDOR') {
-        concepto = 'Pago recibido';
+        concepto = 'Pago Realizado a Proveedor';
       } else if (mov.salida.tipo === 'GASTO') {
         concepto = 'Gasto';
       } else if (mov.salida.tipo === 'RETIRO') {
@@ -691,14 +1066,43 @@ export class ClienteLedgerPdfService {
     return this.decimal(numberValue);
   }
 
-  private getTasaVisible(mov: LedgerClientePdfData['movimientos'][number]) {
+  private getCalculoVisible(mov: LedgerClientePdfData['movimientos'][number]) {
     if (!mov.operacion) {
+      if (mov.entrada) {
+        return this.getTasaEntradaVisible(mov.entrada);
+      }
+
+      if (mov.salida) {
+        return this.getTasaSalidaVisible(mov.salida);
+      }
+
       return '-';
     }
 
+    const metodo = this.normalizarMetodoCalculo(mov.operacion.metodoCalculo);
+
+    if (metodo === 'PORCENTAJE') {
+      const porcentaje = Number(mov.operacion.porcentaje ?? 0);
+
+      if (!Number.isFinite(porcentaje)) {
+        return '-';
+      }
+
+      const signo =
+        mov.operacion.aplicacionPorcentaje === 'DESCONTAR' ? '-' : '+';
+
+      return `${signo}${this.decimal(porcentaje)}%`;
+    }
+
+    /**
+     * Para TASA se conserva exactamente el criterio anterior:
+     * VENTA -> tasaVenta
+     * COMPRA -> tasaCompra
+     * DIRECTA -> depende de si el cliente es deudor o acreedor.
+     */
     const tipoOperacion = mov.operacion.tipo;
-    const debito = Number(mov.debitoCop ?? 0);
-    const credito = Number(mov.creditoCop ?? 0);
+    const debito = this.getDebitoMovimiento(mov);
+    const credito = this.getCreditoMovimiento(mov);
 
     if (tipoOperacion === 'VENTA') {
       return this.formatTasa(mov.operacion.tasaVenta);
@@ -709,15 +1113,6 @@ export class ClienteLedgerPdfService {
     }
 
     if (tipoOperacion === 'OPERACION_DIRECTA') {
-      /**
-       * En operación directa:
-       *
-       * - Si el movimiento está en Debe COP, el cliente es deudor.
-       *   Se muestra tasaVenta.
-       *
-       * - Si el movimiento está en Abono COP, el cliente es acreedor.
-       *   Se muestra tasaCompra.
-       */
       if (debito > 0) {
         return this.formatTasa(mov.operacion.tasaVenta);
       }
@@ -725,11 +1120,229 @@ export class ClienteLedgerPdfService {
       if (credito > 0) {
         return this.formatTasa(mov.operacion.tasaCompra);
       }
-
-      return '-';
     }
 
     return '-';
+  }
+
+  private getTasaEntradaVisible(entrada: MovimientoConversionPdf) {
+    const tasaDesdeMontos = this.calcularTasaComercialVisible(entrada);
+
+    if (tasaDesdeMontos !== null) {
+      return this.formatTasa(tasaDesdeMontos);
+    }
+
+    const tasaDesdeGuardada =
+      this.getTasaEntradaVisibleDesdeTasaGuardada(entrada);
+
+    return tasaDesdeGuardada !== null
+      ? this.formatTasa(tasaDesdeGuardada)
+      : '-';
+  }
+
+  private getTasaSalidaVisible(salida: MovimientoConversionPdf) {
+    const tasaDesdeMontos = this.calcularTasaComercialVisible(salida);
+
+    if (tasaDesdeMontos !== null) {
+      return this.formatTasa(tasaDesdeMontos);
+    }
+
+    const par = this.getParTasaVisible(
+      salida.monedaPago,
+      salida.monedaAplicacion,
+    );
+
+    if (!par) {
+      return '-';
+    }
+
+    return this.formatTasa(salida.tasaConversion);
+  }
+
+  private calcularTasaComercialVisible(mov: MovimientoConversionPdf) {
+    const par = this.getParTasaVisible(mov.monedaPago, mov.monedaAplicacion);
+
+    if (!par) {
+      return null;
+    }
+
+    const monedaPago = this.normalizarMoneda(mov.monedaPago);
+    const monedaAplicacion = this.normalizarMoneda(mov.monedaAplicacion);
+    const montoPago = this.toFinitePositiveNumber(mov.montoPago);
+    const montoAplicado = this.toFinitePositiveNumber(mov.montoAplicado);
+
+    if (
+      !monedaPago ||
+      !monedaAplicacion ||
+      montoPago === null ||
+      montoAplicado === null
+    ) {
+      return null;
+    }
+
+    const montoBase =
+      monedaPago === par.base
+        ? montoPago
+        : monedaAplicacion === par.base
+          ? montoAplicado
+          : null;
+
+    const montoQuote =
+      monedaPago === par.quote
+        ? montoPago
+        : monedaAplicacion === par.quote
+          ? montoAplicado
+          : null;
+
+    if (montoBase === null || montoQuote === null || montoBase <= 0) {
+      return null;
+    }
+
+    const tasa = montoQuote / montoBase;
+
+    return Number.isFinite(tasa) && tasa > 0 ? tasa : null;
+  }
+
+  private getTasaEntradaVisibleDesdeTasaGuardada(
+    entrada: MovimientoConversionPdf,
+  ) {
+    const par = this.getParTasaVisible(
+      entrada.monedaPago,
+      entrada.monedaAplicacion,
+    );
+
+    if (!par) {
+      return null;
+    }
+
+    const monedaPago = this.normalizarMoneda(entrada.monedaPago);
+    const monedaAplicacion = this.normalizarMoneda(entrada.monedaAplicacion);
+    const tasaGuardada = this.toFinitePositiveNumber(entrada.tasaConversion);
+
+    if (!monedaPago || !monedaAplicacion || tasaGuardada === null) {
+      return null;
+    }
+
+    /**
+     * Entradas historicamente guarda:
+     * 1 monedaAplicacion = tasaConversion monedaPago.
+     */
+    if (monedaAplicacion === par.base && monedaPago === par.quote) {
+      return tasaGuardada;
+    }
+
+    if (monedaAplicacion === par.quote && monedaPago === par.base) {
+      return 1 / tasaGuardada;
+    }
+
+    return null;
+  }
+
+  private getParTasaVisible(
+    monedaA?: string | null,
+    monedaB?: string | null,
+  ): ParTasaVisible | null {
+    const a = this.normalizarMoneda(monedaA);
+    const b = this.normalizarMoneda(monedaB);
+
+    if (!a || !b || a === b) {
+      return null;
+    }
+
+    if (this.esPar(a, b, 'BS', 'COP')) {
+      return { base: 'BS', quote: 'COP' };
+    }
+
+    if (this.esPar(a, b, 'USD', 'BS')) {
+      return { base: 'USD', quote: 'BS' };
+    }
+
+    if (this.esPar(a, b, 'USD', 'COP')) {
+      return { base: 'USD', quote: 'COP' };
+    }
+
+    return null;
+  }
+
+  private esPar(monedaA: string, monedaB: string, base: string, quote: string) {
+    return (
+      (monedaA === base && monedaB === quote) ||
+      (monedaA === quote && monedaB === base)
+    );
+  }
+
+  private normalizarMoneda(value?: string | null) {
+    return value?.trim().toUpperCase() || null;
+  }
+
+  private toFinitePositiveNumber(value: unknown) {
+    const numberValue = Number(value);
+
+    return Number.isFinite(numberValue) && numberValue > 0
+      ? numberValue
+      : null;
+  }
+
+  private getDebitoMovimiento(
+    mov: LedgerClientePdfData['movimientos'][number],
+  ) {
+    const multimoneda = Number(mov.debito);
+
+    if (Number.isFinite(multimoneda)) {
+      return multimoneda;
+    }
+
+    const legado = Number(mov.debitoCop ?? 0);
+
+    return Number.isFinite(legado) ? legado : 0;
+  }
+
+  private getCreditoMovimiento(
+    mov: LedgerClientePdfData['movimientos'][number],
+  ) {
+    const multimoneda = Number(mov.credito);
+
+    if (Number.isFinite(multimoneda)) {
+      return multimoneda;
+    }
+
+    const legado = Number(mov.creditoCop ?? 0);
+
+    return Number.isFinite(legado) ? legado : 0;
+  }
+
+  private normalizarMetodoCalculo(
+    value?: string | null,
+  ): 'TASA' | 'PORCENTAJE' | null {
+    if (!value) {
+      return null;
+    }
+
+    const normalized = value.trim().toUpperCase();
+
+    if (normalized === 'TASA') {
+      return 'TASA';
+    }
+
+    if (normalized === 'PORCENTAJE' || normalized === 'PROMEDIO') {
+      return 'PORCENTAJE';
+    }
+
+    return null;
+  }
+
+  private getMetodoFiltroTexto(value?: string | null) {
+    const metodo = this.normalizarMetodoCalculo(value);
+
+    if (metodo === 'TASA') {
+      return 'Tasa';
+    }
+
+    if (metodo === 'PORCENTAJE') {
+      return 'Porcentaje';
+    }
+
+    return 'Todos';
   }
 
   //   private getTasaCompra(mov: LedgerClientePdfData['movimientos'][number]) {
@@ -771,20 +1384,22 @@ export class ClienteLedgerPdfService {
   //     return this.decimal(Number(mov.operacion.tasaVenta));
   //   }
 
-  private formatDateShort(value: Date | string) {
+  private formatDateShort(value: Date | string, timeZone: string) {
     const date = new Date(value);
 
     return date.toLocaleDateString('es-CO', {
+      timeZone,
       year: '2-digit',
       month: '2-digit',
       day: '2-digit',
     });
   }
 
-  private formatDateTime(value: Date | string) {
+  private formatDateTime(value: Date | string, timeZone?: string) {
     const date = new Date(value);
 
     return date.toLocaleString('es-CO', {
+      timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',

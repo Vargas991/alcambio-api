@@ -1,6 +1,11 @@
 import { IsDateString, IsEnum, IsOptional } from 'class-validator';
-import { EstadoOperacion, Moneda, TipoMovimientoCliente, TipoOperacion } from '../../../generated/prisma/client';
-import { Operacion } from 'generated/prisma/browser';
+import {
+  EstadoOperacion,
+  Moneda,
+  TipoMovimientoCliente,
+  TipoOperacion,
+} from '../../../generated/prisma/client';
+import { MetodoCalculoOperacion, Operacion } from 'generated/prisma/browser';
 
 export class FilterClienteLedgerDto {
   @IsOptional()
@@ -14,7 +19,7 @@ export class FilterClienteLedgerDto {
   @IsOptional()
   @IsEnum(TipoMovimientoCliente)
   tipoMov?: TipoMovimientoCliente;
-  
+
   @IsOptional()
   @IsEnum(TipoOperacion)
   tipo?: TipoOperacion;
@@ -26,4 +31,8 @@ export class FilterClienteLedgerDto {
   @IsOptional()
   @IsEnum(EstadoOperacion)
   estado?: EstadoOperacion;
+
+  @IsOptional()
+  @IsEnum(MetodoCalculoOperacion)
+  metodoCalculo?: MetodoCalculoOperacion;
 }

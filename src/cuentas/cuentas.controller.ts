@@ -60,9 +60,10 @@ export class CuentasController {
   }
 
   @Get('promedios-compra')
- async  obtenerPromediosCompraCuentasOperativas() {
-    const data = await this.cuentasService.obtenerPromediosCompraCuentasOperativas();
-    return successResponse(data, "Promedios obtenidos con exito.")
+  async obtenerPromediosCompraCuentasOperativas() {
+    const data =
+      await this.cuentasService.obtenerPromediosCompraCuentasOperativas();
+    return successResponse(data, 'Promedios obtenidos con exito.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
@@ -134,6 +135,4 @@ export class CuentasController {
     const data = await this.cuentasService.obtenerPromedioCompraCuenta(id);
     return successResponse(data, 'Promedio de Cuenta Operativa');
   }
-
-  
 }

@@ -47,10 +47,8 @@ export class ClientesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
-  async findAll(
-    @Query('nombre') nombre?: string
-  ) {
-    const data = await this.clientesService.findAll(nombre,);
+  async findAll(@Query('nombre') nombre?: string) {
+    const data = await this.clientesService.findAll(nombre);
     return successResponse(data, 'Clientes encontrados correctamente.');
   }
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
@@ -119,6 +117,7 @@ export class ClientesController {
   ) {
     const ledger = await this.clientesService.getLedger(id, filters);
     const pdfBuffer = await this.clientesLedgerPdfService.generate(ledger);
+    console.log('filters: ', filters);
 
     res.set({
       'Content-Type': 'application/pdf',
@@ -130,9 +129,12 @@ export class ClientesController {
   }
 
   @Patch(':id/ajustar-saldo')
-  async ajustarSaldo(@Param('id') id: string, @Body() dto: AjustarSaldoClienteDto) {
+  async ajustarSaldo(
+    @Param('id') id: string,
+    @Body() dto: AjustarSaldoClienteDto,
+  ) {
     const data = await this.clientesService.ajustarSaldo(id, dto);
-    return successResponse(data, "Ajuste realizado satisfactoriamente.")
+    return successResponse(data, 'Ajuste realizado satisfactoriamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)

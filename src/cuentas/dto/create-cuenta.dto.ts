@@ -26,7 +26,7 @@ export class CreateCuentaDto {
   categoria!: CategoriaCuenta;
 
   @IsEnum(TipoCuenta)
-  tipo! : TipoCuenta;
+  tipo!: TipoCuenta;
 
   @IsOptional()
   @IsNumber()

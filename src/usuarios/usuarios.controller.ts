@@ -51,10 +51,7 @@ export class UsuariosController {
 
   @Roles(RolUsuario.ADMIN)
   @Patch(':id')
-  async update(
-    @Param('id') id: string,
-    @Body() dto: UpdateUsuarioDto,
-  ) {
+  async update(@Param('id') id: string, @Body() dto: UpdateUsuarioDto) {
     const data = await this.usuariosService.update(id, dto);
     return successResponse(data, 'Usuario actualizado correctamente.');
   }
@@ -66,7 +63,10 @@ export class UsuariosController {
     @Body() dto: UpdateEstadoUsuarioDto,
   ) {
     const data = await this.usuariosService.updateEstado(id, dto);
-    return successResponse(data, 'Estado del usuario actualizado correctamente.');
+    return successResponse(
+      data,
+      'Estado del usuario actualizado correctamente.',
+    );
   }
 
   @Roles(RolUsuario.ADMIN)
@@ -76,7 +76,10 @@ export class UsuariosController {
     @Body() dto: UpdatePasswordUsuarioDto,
   ) {
     const data = await this.usuariosService.updatePassword(id, dto);
-    return successResponse(data, 'Contraseña del usuario actualizada correctamente.');
+    return successResponse(
+      data,
+      'Contraseña del usuario actualizada correctamente.',
+    );
   }
 
   @Roles(RolUsuario.ADMIN)

@@ -38,7 +38,7 @@ export class OperacionesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
-  async findAll( @Query() filters: FilterOperacionesDto) {
+  async findAll(@Query() filters: FilterOperacionesDto) {
     const data = await this.operacionesService.findAll(filters);
     return successResponse(data, 'Operaciones encontradas correctamente.');
   }
@@ -51,19 +51,16 @@ export class OperacionesController {
   }
 
   @Put(':id')
-  async editar(
-    @Param('id') id: string,
-    @Body() dto: UpdateOperacionDto,
-  ) {
+  async editar(@Param('id') id: string, @Body() dto: UpdateOperacionDto) {
     const data = await this.operacionesService.editar(id, dto);
-    return successResponse(data, "Operacion Editada exitosamente")
+    return successResponse(data, 'Operacion Editada exitosamente');
   }
 
   @Roles(RolUsuario.ADMIN)
   @Delete(':id')
   eliminar(@Param('id') id: string) {
-  return this.operacionesService.cancelar(id, {
-    motivo: 'Eliminación de operación',
-  });
-}
+    return this.operacionesService.cancelar(id, {
+      motivo: 'Eliminación de operación',
+    });
+  }
 }

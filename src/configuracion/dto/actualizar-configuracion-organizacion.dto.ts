@@ -7,9 +7,7 @@ import {
   MinLength,
 } from 'class-validator';
 
-import {
-  Moneda,
-} from '../../../generated/prisma/client';
+import { Moneda } from '../../../generated/prisma/client';
 
 export class ActualizarConfiguracionOrganizacionDto {
   @IsOptional()

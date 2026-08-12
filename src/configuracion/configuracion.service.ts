@@ -1,30 +1,23 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
 
-import {
-  existsSync,
-} from 'node:fs';
+import { existsSync } from 'node:fs';
 
-import {
-  unlink,
-} from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 
-import {
-  basename,
-  join,
-} from 'node:path';
+import { basename, join } from 'node:path';
 
 import { PrismaService } from '../prisma/prisma.service';
 
 import { ActualizarConfiguracionOrganizacionDto } from './dto/actualizar-configuracion-organizacion.dto';
+import { isValidTimeZone } from '../common/helpers/date-range.helper';
 
 @Injectable()
 export class ConfiguracionService {
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   /**
    * El sistema actualmente maneja una sola
@@ -34,40 +27,35 @@ export class ConfiguracionService {
    * se crea automáticamente.
    */
   async obtenerOrganizacion() {
-    const configuracion =
-      await this.prisma
-        .configuracionOrganizacion
-        .findFirst({
-          orderBy: {
-            creadoEn: 'asc',
-          },
-        });
+    const configuracion = await this.prisma.configuracionOrganizacion.findFirst(
+      {
+        orderBy: {
+          creadoEn: 'asc',
+        },
+      },
+    );
 
     if (configuracion) {
       return configuracion;
     }
 
-    return this.prisma
-      .configuracionOrganizacion
-      .create({
-        data: {
-          nombre: 'Mi organización',
-          monedaBase: 'COP',
-          zonaHoraria:
-            'America/Caracas',
-        },
-      });
+    return this.prisma.configuracionOrganizacion.create({
+      data: {
+        nombre: 'Mi organización',
+        monedaBase: 'COP',
+        zonaHoraria: 'America/Caracas',
+      },
+    });
   }
 
   async obtenerIdentidadPublica() {
-  const configuracion =
-    await this.obtenerOrganizacion();
+    const configuracion = await this.obtenerOrganizacion();
 
-  return {
-    nombre: configuracion.nombre,
-    logoUrl: configuracion.logoUrl,
-  };
-}
+    return {
+      nombre: configuracion.nombre,
+      logoUrl: configuracion.logoUrl,
+    };
+  }
 
   /**
    * Actualiza la información general.
@@ -75,97 +63,68 @@ export class ConfiguracionService {
    * El logo se administra mediante un endpoint
    * independiente.
    */
-  async actualizarOrganizacion(
-    dto: ActualizarConfiguracionOrganizacionDto,
-  ) {
-    const configuracion =
-      await this.obtenerOrganizacion();
+  async actualizarOrganizacion(dto: ActualizarConfiguracionOrganizacionDto) {
+    const configuracion = await this.obtenerOrganizacion();
+    const zonaHoraria = this.normalizarZonaHoraria(dto.zonaHoraria);
 
-    return this.prisma
-      .configuracionOrganizacion
-      .update({
-        where: {
-          id: configuracion.id,
-        },
+    return this.prisma.configuracionOrganizacion.update({
+      where: {
+        id: configuracion.id,
+      },
 
-        data: {
-          nombre:
-            dto.nombre === undefined
-              ? undefined
-              : dto.nombre.trim(),
+      data: {
+        nombre: dto.nombre === undefined ? undefined : dto.nombre.trim(),
 
-          telefono:
-            dto.telefono === undefined
-              ? undefined
-              : this.normalizarTextoOpcional(
-                  dto.telefono,
-                ),
+        telefono:
+          dto.telefono === undefined
+            ? undefined
+            : this.normalizarTextoOpcional(dto.telefono),
 
-          correo:
-            dto.correo === undefined
-              ? undefined
-              : this.normalizarTextoOpcional(
-                  dto.correo,
-                ),
+        correo:
+          dto.correo === undefined
+            ? undefined
+            : this.normalizarTextoOpcional(dto.correo),
 
-          direccion:
-            dto.direccion === undefined
-              ? undefined
-              : this.normalizarTextoOpcional(
-                  dto.direccion,
-                ),
+        direccion:
+          dto.direccion === undefined
+            ? undefined
+            : this.normalizarTextoOpcional(dto.direccion),
 
-          monedaBase:
-            dto.monedaBase,
+        monedaBase: dto.monedaBase,
 
-          zonaHoraria:
-            dto.zonaHoraria ===
-            undefined
-              ? undefined
-              : dto.zonaHoraria.trim(),
-        },
-      });
+        zonaHoraria: zonaHoraria,
+      },
+    });
   }
 
   /**
    * Guarda la URL del nuevo logo y elimina
    * el archivo anterior.
    */
-  async actualizarLogo(
-    nombreArchivo: string,
-  ) {
-    const configuracion =
-      await this.obtenerOrganizacion();
+  async actualizarLogo(nombreArchivo: string) {
+    const configuracion = await this.obtenerOrganizacion();
 
-    const logoUrl =
-      `/uploads/organizacion/${nombreArchivo}`;
+    const logoUrl = `/uploads/organizacion/${nombreArchivo}`;
 
     try {
-      await this.eliminarArchivoLogo(
-        configuracion.logoUrl,
-        nombreArchivo,
-      );
+      await this.eliminarArchivoLogo(configuracion.logoUrl, nombreArchivo);
 
-      return await this.prisma
-        .configuracionOrganizacion
-        .update({
-          where: {
-            id: configuracion.id,
-          },
+      return await this.prisma.configuracionOrganizacion.update({
+        where: {
+          id: configuracion.id,
+        },
 
-          data: {
-            logoUrl,
-          },
-        });
+        data: {
+          logoUrl,
+        },
+      });
     } catch (error) {
       /**
        * Si falla la actualización en base de datos,
        * intentamos borrar el archivo recién subido
        * para evitar archivos huérfanos.
        */
-      await this.eliminarArchivoLogo(
-        logoUrl,
-      ).catch(() => undefined);
+      await this.eliminarArchivoLogo(logoUrl).catch(() => undefined);
 
       throw error;
     }
@@ -175,41 +134,50 @@ export class ConfiguracionService {
    * Elimina el logo físico y limpia logoUrl.
    */
   async eliminarLogo() {
-    const configuracion =
-      await this.obtenerOrganizacion();
+    const configuracion = await this.obtenerOrganizacion();
 
     if (configuracion.logoUrl) {
-      await this.eliminarArchivoLogo(
-        configuracion.logoUrl,
-      );
+      await this.eliminarArchivoLogo(configuracion.logoUrl);
     }
 
-    return this.prisma
-      .configuracionOrganizacion
-      .update({
-        where: {
-          id: configuracion.id,
-        },
+    return this.prisma.configuracionOrganizacion.update({
+      where: {
+        id: configuracion.id,
+      },
 
-        data: {
-          logoUrl: null,
-        },
-      });
+      data: {
+        logoUrl: null,
+      },
+    });
   }
 
-  private normalizarTextoOpcional(
-    valor: string | null,
-  ) {
+  private normalizarTextoOpcional(valor: string | null) {
     if (valor === null) {
       return null;
     }
 
-    const valorNormalizado =
-      valor.trim();
+    const valorNormalizado = valor.trim();
 
-    return valorNormalizado.length > 0
-      ? valorNormalizado
-      : null;
+    return valorNormalizado.length > 0 ? valorNormalizado : null;
+  }
+
+  private normalizarZonaHoraria(zonaHoraria: string | undefined) {
+    if (zonaHoraria === undefined) {
+      return undefined;
+    }
+
+    const zonaHorariaNormalizada = zonaHoraria.trim();
+
+    if (
+      zonaHorariaNormalizada.length === 0 ||
+      !isValidTimeZone(zonaHorariaNormalizada)
+    ) {
+      throw new BadRequestException(
+        'La zona horaria debe ser un identificador IANA valido.',
+      );
+    }
+
+    return zonaHorariaNormalizada;
   }
 
   /**
@@ -226,14 +194,9 @@ export class ConfiguracionService {
       return;
     }
 
-    const nombreArchivo =
-      basename(logoUrl);
+    const nombreArchivo = basename(logoUrl);
 
-    if (
-      nuevoNombreArchivo &&
-      nombreArchivo ===
-        nuevoNombreArchivo
-    ) {
+    if (nuevoNombreArchivo && nombreArchivo === nuevoNombreArchivo) {
       return;
     }
 

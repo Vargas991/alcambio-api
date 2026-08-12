@@ -5,10 +5,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 
-import {
-  EstadoEntidad,
-  RolUsuario,
-} from '../../generated/prisma/client';
+import { EstadoEntidad, RolUsuario } from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';

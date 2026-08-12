@@ -50,14 +50,14 @@ export class EntradasController {
 
   @Put(':id')
   async editar(@Param('id') id: string, @Body() dto: UpdateEntradaDto) {
-    const data = await  this.entradasService.editar(id, dto);
-    return successResponse(data, "Entrada editada con Exito.")
+    const data = await this.entradasService.editar(id, dto);
+    return successResponse(data, 'Entrada editada con Exito.');
   }
 
   @Delete(':id')
   async eliminar(@Param('id') id: string) {
     const data = await this.entradasService.eliminar(id);
-    return successResponse(data, "Entrada Eliminada con Exito.")
+    return successResponse(data, 'Entrada Eliminada con Exito.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)

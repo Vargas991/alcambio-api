@@ -12,13 +12,16 @@ export class AuthController {
 
   @Post('login')
   async login(@Body() dto: LoginDto) {
-    const data =  await this.authService.login(dto);
+    const data = await this.authService.login(dto);
     return successResponse(data, 'Inicio de sesión exitoso.');
   }
 
   @UseGuards(AuthGuard('jwt'))
   @Get('me')
   me(@CurrentUser() usuario: unknown) {
-    return successResponse(usuario, 'Información del usuario obtenida correctamente.');
+    return successResponse(
+      usuario,
+      'Información del usuario obtenida correctamente.',
+    );
   }
 }

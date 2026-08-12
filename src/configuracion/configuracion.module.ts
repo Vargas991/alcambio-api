@@ -7,8 +7,6 @@ import { PrismaModule } from 'src/prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [ConfiguracionController],
   providers: [ConfiguracionService],
-  exports: [
-    ConfiguracionService,
-  ],
+  exports: [ConfiguracionService],
 })
 export class ConfiguracionModule {}
