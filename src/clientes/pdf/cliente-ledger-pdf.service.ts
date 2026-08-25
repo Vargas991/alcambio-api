@@ -662,7 +662,7 @@ export class ClienteLedgerPdfService {
       let concepto = '';
 
       if (mov.salida.tipo === 'PAGO_ACREEDOR') {
-        concepto = 'Pago recibido';
+        concepto = 'Pago Realizado';
       } else if (mov.salida.tipo === 'GASTO') {
         concepto = 'Gasto';
       } else if (mov.salida.tipo === 'RETIRO') {
@@ -731,6 +731,8 @@ export class ClienteLedgerPdfService {
 
     return '-';
   }
+
+  
 
   //   private getTasaCompra(mov: LedgerClientePdfData['movimientos'][number]) {
   //   if (!mov.operacion) {
