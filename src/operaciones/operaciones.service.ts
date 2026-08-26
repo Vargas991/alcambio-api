@@ -20,6 +20,7 @@ import { CreateOperacionDto } from './dto/create-operacion.dto';
 import { CancelarOperacionDto } from './dto/cancelar-operacion.dto';
 import { FilterOperacionesDto } from './dto/filter-operaciones.dto';
 import { UpdateOperacionDto } from './dto/update-operacione.dto';
+import { getUtcDayRange } from '../common/helpers/date-range.helper';
 
 @Injectable()
 export class OperacionesService {
@@ -75,9 +76,11 @@ export class OperacionesService {
     });
   }
 
-  findAll(filters: FilterOperacionesDto) {
+  async findAll(filters: FilterOperacionesDto) {
     const where: Prisma.OperacionWhereInput = {};
     const andConditions: Prisma.OperacionWhereInput[] = [];
+    const zonaHoraria =
+      await this.obtenerZonaHorariaOrganizacion();
 
     if (filters.tipo) {
       where.tipo = filters.tipo;
@@ -116,11 +119,13 @@ export class OperacionesService {
       const fechaOperacion: Prisma.DateTimeFilter = {};
 
       if (filters.desde) {
-        fechaOperacion.gte = this.buildStartOfDayUtcFromLocal(filters.desde);
+        const { inicio } = getUtcDayRange(filters.desde, zonaHoraria);
+        fechaOperacion.gte = inicio;
       }
 
       if (filters.hasta) {
-        fechaOperacion.lte = this.buildEndOfDayUtcFromLocal(filters.hasta);
+        const { fin } = getUtcDayRange(filters.hasta, zonaHoraria);
+        fechaOperacion.lt = fin;
       }
 
       where.fechaOperacion = fechaOperacion;
@@ -174,18 +179,6 @@ export class OperacionesService {
     if (andConditions.length > 0) {
       where.AND = andConditions;
     }
-
-
-    console.log({
-      desdeInput: filters.desde,
-      hastaInput: filters.hasta,
-      desdeFinal: filters.desde
-        ? this.buildStartOfDayUtcFromLocal(filters.desde).toISOString()
-        : null,
-      hastaFinal: filters.hasta
-        ? this.buildEndOfDayUtcFromLocal(filters.hasta).toISOString()
-        : null,
-    });
 
     return this.prisma.operacion.findMany({
       where,
@@ -757,22 +750,6 @@ export class OperacionesService {
     });
   }
 
-  private buildStartOfDayUtcFromLocal(date: string) {
-    const [year, month, day] = date.split('-').map(Number);
-
-    // Venezuela UTC-4:
-    // 2026-07-13 00:00 local = 2026-07-13T04:00:00.000Z
-    return new Date(Date.UTC(year, month - 1, day, 4, 0, 0, 0));
-  }
-
-  private buildEndOfDayUtcFromLocal(date: string) {
-    const [year, month, day] = date.split('-').map(Number);
-
-    // Venezuela UTC-4:
-    // 2026-07-13 23:59 local = 2026-07-14T03:59:59.999Z
-    return new Date(Date.UTC(year, month - 1, day + 1, 3, 59, 59, 999));
-  }
-
   private validarDtoPorTipo(dto: CreateOperacionDto | UpdateOperacionDto) {
   if (!dto.tasaCompra || dto.tasaCompra <= 0) {
     throw new BadRequestException(
@@ -906,6 +883,25 @@ export class OperacionesService {
 
   return `OP-${String(siguiente).padStart(6, '0')}`;
 }
+
+  private async obtenerZonaHorariaOrganizacion() {
+    const configuracion =
+      await this.prisma
+        .configuracionOrganizacion
+        .findFirst({
+          select: {
+            zonaHoraria: true,
+          },
+        });
+
+    if (!configuracion) {
+      throw new BadRequestException(
+        'La configuracion de la organizacion no existe.',
+      );
+    }
+
+    return configuracion.zonaHoraria;
+  }
 
   private operacionInclude() {
     return {

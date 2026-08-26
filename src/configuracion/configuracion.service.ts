@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 import { ActualizarConfiguracionOrganizacionDto } from './dto/actualizar-configuracion-organizacion.dto';
+import { isValidTimeZone } from '../common/helpers/date-range.helper';
 
 @Injectable()
 export class ConfiguracionService {
@@ -80,6 +82,10 @@ export class ConfiguracionService {
   ) {
     const configuracion =
       await this.obtenerOrganizacion();
+    const zonaHoraria =
+      this.normalizarZonaHoraria(
+        dto.zonaHoraria,
+      );
 
     return this.prisma
       .configuracionOrganizacion
@@ -118,11 +124,7 @@ export class ConfiguracionService {
           monedaBase:
             dto.monedaBase,
 
-          zonaHoraria:
-            dto.zonaHoraria ===
-            undefined
-              ? undefined
-              : dto.zonaHoraria.trim(),
+          zonaHoraria,
         },
       });
   }
@@ -210,6 +212,30 @@ export class ConfiguracionService {
     return valorNormalizado.length > 0
       ? valorNormalizado
       : null;
+  }
+
+  private normalizarZonaHoraria(
+    zonaHoraria: string | undefined,
+  ) {
+    if (zonaHoraria === undefined) {
+      return undefined;
+    }
+
+    const zonaHorariaNormalizada =
+      zonaHoraria.trim();
+
+    if (
+      zonaHorariaNormalizada.length === 0 ||
+      !isValidTimeZone(
+        zonaHorariaNormalizada,
+      )
+    ) {
+      throw new BadRequestException(
+        'La zona horaria debe ser un identificador IANA valido.',
+      );
+    }
+
+    return zonaHorariaNormalizada;
   }
 
   /**

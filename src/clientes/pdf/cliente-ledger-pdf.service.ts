@@ -1,5 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import { existsSync } from 'fs';
+import { extname, isAbsolute, join } from 'path';
+import { ConfiguracionService } from 'src/configuracion/configuracion.service';
 
 type LedgerClientePdfData = {
   cliente: {
@@ -14,6 +17,7 @@ type LedgerClientePdfData = {
     hasta: string | null;
     tipo: string | null;
     moneda: string | null;
+    metodoCalculo?: string | null;
   };
   resumen: {
     totalDebitosCop: number;
@@ -94,9 +98,27 @@ const TIPO_COLORS: Record<string, string> = {
   CANCELACIÓN: '#F3F4F6', // gray-100
 };
 
+type PdfOrganizationConfig = {
+  nombre: string;
+  logoUrl?: string | null;
+  zonaHoraria?: string;
+};
+
+const ORGANIZATION_NAME =
+  process.env.ORGANIZATION_NAME ?? 'Nombre de la organización';
+
 @Injectable()
 export class ClienteLedgerPdfService {
+  private readonly logger = new Logger(ClienteLedgerPdfService.name);
+
+  constructor(
+    private readonly configuracionService: ConfiguracionService,
+  ) {}
+
   async generate(ledger: LedgerClientePdfData): Promise<Buffer> {
+    const configuracion =
+      await this.configuracionService.obtenerOrganizacion();
+
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({
         size: 'A4',
@@ -111,52 +133,151 @@ export class ClienteLedgerPdfService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      this.drawHeader(doc, ledger);
+      this.drawHeader(doc, ledger, configuracion);
       this.drawResumen(doc, ledger);
-      this.drawMovimientos(doc, ledger);
+      this.drawMovimientos(doc, ledger, configuracion.zonaHoraria);
       this.drawFooter(doc);
 
       doc.end();
     });
   }
 
-  private drawHeader(doc: PDFKit.PDFDocument, ledger: LedgerClientePdfData) {
+  private drawHeader(
+    doc: PDFKit.PDFDocument,
+    ledger: LedgerClientePdfData,
+    configuracion?: PdfOrganizationConfig,
+  ) {
+    /**
+     * ==========================================
+     * MEMBRETE
+     * ==========================================
+     */
+    const headerTop = 20;
+    const logoWidth = 80;
+    const logoHeight = 60;
+    const organizationTextX = logoWidth + 50;
+
+    const logoPath =
+      this.resolveLogoPath(
+        configuracion?.logoUrl,
+      );
+
+    if (logoPath && existsSync(logoPath)) {
+      if (!this.isPdfKitSupportedImage(logoPath)) {
+        this.logger.warn(
+          `El logo configurado no se puede incrustar en PDFKit: ${logoPath}. Usa PNG o JPG.`,
+        );
+      } else {
+        try {
+          doc.image(logoPath, 50, headerTop, {
+            fit: [logoWidth, logoHeight],
+          });
+        } catch (error) {
+          this.logger.error(
+            `No fue posible procesar el logo del PDF en ${logoPath}.`,
+            error instanceof Error ? error.stack : undefined,
+          );
+        }
+      }
+    } else if (logoPath) {
+      this.logger.warn(
+        `No se encontro el logo configurado para el PDF: ${logoPath}.`,
+      );
+    }
+
     doc
-      .fontSize(16)
+      .fontSize(12)
       .font('Helvetica-Bold')
-      .text('Estado de Cuenta del Cliente', 30, 25, {
+      .fillColor('#111827')
+      .text(
+        configuracion?.nombre ?? ORGANIZATION_NAME,
+        organizationTextX,
+        headerTop + logoHeight / 2,
+        {
+          width: 790 - organizationTextX,
+        },
+      );
+
+    doc
+      .save()
+      .strokeColor('#D1D5DB')
+      .lineWidth(0.8)
+      .moveTo(organizationTextX, 63)
+      .lineTo(790, 63)
+      .stroke()
+      .restore();
+
+    /**
+     * Título principal.
+     */
+    doc
+      .fontSize(14)
+      .font('Helvetica-Bold')
+      .fillColor('#000000')
+      .text('Estado de Cuenta del Cliente', 30, 74, {
+        width: 760,
         align: 'center',
       });
 
-    doc.moveDown(0.4);
+    /**
+     * Nombre del cliente.
+     */
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .fillColor('#374151')
+      .text(ledger.cliente.nombre, 30, 97, {
+        width: 760,
+        align: 'center',
+      });
 
     doc
       .fontSize(8)
       .font('Helvetica')
-      .text(`Generado: ${this.formatDateTime(new Date())}`, {
-        align: 'center',
-      });
+      .fillColor('#4B5563')
+      .text(
+        `Generado: ${this.formatDateTime(
+          new Date(),
+          configuracion?.zonaHoraria,
+        )}`,
+        30,
+        115,
+        {
+          width: 760,
+          align: 'center',
+        },
+      );
 
-    doc.moveDown(0.8);
+    doc.y = 139;
 
+    /**
+     * Datos complementarios del cliente.
+     */
     const yCliente = doc.y;
 
     doc
       .fontSize(8)
       .font('Helvetica-Bold')
-      .text('Cliente:', 30, yCliente, { continued: true })
+      .fillColor('#000000')
+      .text('Documento:', 30, yCliente, {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.cliente.nombre}`, { continued: true })
+      .text(` ${ledger.cliente.documento ?? 'N/A'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Documento:', { continued: true })
+      .text('   Teléfono:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.cliente.documento ?? 'N/A'}`, { continued: true })
+      .text(` ${ledger.cliente.telefono ?? 'N/A'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Teléfono:', { continued: true })
-      .font('Helvetica')
-      .text(` ${ledger.cliente.telefono ?? 'N/A'}`, { continued: true })
-      .font('Helvetica-Bold')
-      .text('   Estado:', { continued: true })
+      .text('   Estado:', {
+        continued: true,
+      })
       .font('Helvetica')
       .text(` ${ledger.cliente.estado}`);
 
@@ -165,21 +286,47 @@ export class ClienteLedgerPdfService {
     doc
       .fontSize(8)
       .font('Helvetica-Bold')
-      .text('Desde:', 30, doc.y, { continued: true })
+      .text('Desde:', 30, doc.y, {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.desde ?? 'Sin filtro'}`, { continued: true })
+      .text(` ${ledger.filtros.desde ?? 'Sin filtro'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Hasta:', { continued: true })
+      .text('   Hasta:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.hasta ?? 'Sin filtro'}`, { continued: true })
+      .text(` ${ledger.filtros.hasta ?? 'Sin filtro'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Tipo:', { continued: true })
+      .text('   Tipo:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.tipo ?? 'Todos'}`, { continued: true })
+      .text(` ${ledger.filtros.tipo ?? 'Todos'}`, {
+        continued: true,
+      })
       .font('Helvetica-Bold')
-      .text('   Moneda:', { continued: true })
+      .text('   Moneda:', {
+        continued: true,
+      })
       .font('Helvetica')
-      .text(` ${ledger.filtros.moneda ?? 'Todas'}`);
+      .text(` ${ledger.filtros.moneda ?? 'Todas'}`, {
+        continued: true,
+      })
+      .font('Helvetica-Bold')
+      .text('   Método:', {
+        continued: true,
+      })
+      .font('Helvetica')
+      .text(
+        ` ${this.getMetodoFiltroTexto(
+          ledger.filtros.metodoCalculo,
+        )}`,
+      );
 
     doc.moveDown(0.7);
 
@@ -225,6 +372,7 @@ export class ClienteLedgerPdfService {
   private drawMovimientos(
     doc: PDFKit.PDFDocument,
     ledger: LedgerClientePdfData,
+    timeZone: string,
   ) {
     const columns: TableColumn[] = [
       { title: 'Fecha', x: 30, width: 70, align: 'left' },
@@ -274,7 +422,10 @@ export class ClienteLedgerPdfService {
       const saldoColor = this.getSaldoColor(saldo);
 
       const row = {
-        fecha: this.formatDateShort(mov.creadoEn),
+        fecha: this.formatDateShort(
+          mov.creadoEn,
+          timeZone,
+        ),
         // referencia: this.getReferencia(mov),
         tipo: tipoVisual,
         concepto: this.getConceptoCliente(mov),
@@ -513,13 +664,13 @@ export class ClienteLedgerPdfService {
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
 
-      doc
-        .fontSize(7)
-        .font('Helvetica')
-        .text(`Página ${i + 1} de ${range.count}`, 30, doc.page.height - 25, {
-          align: 'center',
-          width: doc.page.width - 60,
-        });
+      const text = `Página ${i + 1} de ${range.count}`;
+      const textWidth = doc.widthOfString(text);
+      const x = (doc.page.width - textWidth) / 2;
+
+      doc.fontSize(7).font('Helvetica').text(text, x, doc.page.height - 25, {
+        lineBreak: false,
+      });
     }
   }
 
@@ -732,8 +883,6 @@ export class ClienteLedgerPdfService {
     return '-';
   }
 
-  
-
   //   private getTasaCompra(mov: LedgerClientePdfData['movimientos'][number]) {
   //   if (!mov.operacion) {
   //     return '-';
@@ -773,17 +922,93 @@ export class ClienteLedgerPdfService {
   //     return this.decimal(Number(mov.operacion.tasaVenta));
   //   }
 
-  private formatDateShort(value: Date | string) {
+  private getMetodoFiltroTexto(
+    value?: string | null,
+  ) {
+    if (!value) {
+      return 'Todos';
+    }
+
+    const normalized = value.trim().toUpperCase();
+
+    if (normalized === 'TASA') {
+      return 'Tasa';
+    }
+
+    if (
+      normalized === 'PORCENTAJE' ||
+      normalized === 'PROMEDIO'
+    ) {
+      return 'Porcentaje';
+    }
+
+    return value;
+  }
+
+  private resolveLogoPath(
+    logoUrl?: string | null,
+  ) {
+    let configuredLogoPath =
+      logoUrl?.trim();
+
+    if (!configuredLogoPath) {
+      return null;
+    }
+
+    if (/^https?:\/\//i.test(configuredLogoPath)) {
+      configuredLogoPath = new URL(configuredLogoPath).pathname;
+    }
+
+    if (
+      isAbsolute(configuredLogoPath) &&
+      !configuredLogoPath.startsWith('/')
+    ) {
+      return configuredLogoPath;
+    }
+
+    const cleanPath =
+      configuredLogoPath.replace(/^[\\/]+/, '');
+
+    const candidates =
+      cleanPath.startsWith('uploads/') ||
+      cleanPath.startsWith('public/')
+        ? [join(process.cwd(), cleanPath)]
+        : [
+            join(process.cwd(), 'public', cleanPath),
+            join(process.cwd(), cleanPath),
+          ];
+
+    return (
+      candidates.find((candidate) =>
+        existsSync(candidate),
+      ) ?? candidates[0]
+    );
+  }
+
+  private isPdfKitSupportedImage(path: string) {
+    const extension = extname(path).toLowerCase();
+
+    return ['.png', '.jpg', '.jpeg'].includes(extension);
+  }
+
+  private formatDateShort(
+    value: Date | string,
+    timeZone: string,
+  ) {
     const date = new Date(value);
 
     return date.toLocaleDateString('es-CO', {
+      timeZone,
       year: '2-digit',
       month: '2-digit',
       day: '2-digit',
     });
   }
 
-  private formatDateTime(value: Date | string) {
+  private formatDateTime(
+    value: Date | string,
+    timeZone?: string,
+  ) {
     const date = new Date(value);
 
     return date.toLocaleString('es-CO', {
@@ -792,6 +1017,7 @@ export class ClienteLedgerPdfService {
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
+      ...(timeZone ? { timeZone } : {}),
     });
   }
 

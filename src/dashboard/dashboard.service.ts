@@ -7,16 +7,13 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CuentasService } from '../cuentas/cuentas.service';
+import {
+  getTodayInTimeZone,
+  getUtcDayRange,
+} from '../common/helpers/date-range.helper';
 
 @Injectable()
 export class DashboardService {
-  /**
-   * El negocio trabaja con horario de Venezuela.
-   *
-   * Venezuela actualmente utiliza UTC-04:00.
-   */
-  private readonly timezoneOffset = '-04:00';
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly cuentasService: CuentasService,
@@ -33,13 +30,18 @@ export class DashboardService {
    * actual de Venezuela.
    */
   async obtenerResumen(fecha?: string) {
+    const zonaHoraria =
+      await this.obtenerZonaHorariaOrganizacion();
     const fechaSeleccionada =
-      fecha ?? this.obtenerFechaActualVenezuela();
+      fecha ?? getTodayInTimeZone(zonaHoraria);
 
     this.validarFecha(fechaSeleccionada);
 
     const { inicio, fin } =
-      this.obtenerRangoDia(fechaSeleccionada);
+      getUtcDayRange(
+        fechaSeleccionada,
+        zonaHoraria,
+      );
 
     /**
      * Ejecutamos en paralelo las dos partes
@@ -764,83 +766,6 @@ export class DashboardService {
    * ==========================================
    */
 
-  private obtenerFechaActualVenezuela() {
-    return new Intl.DateTimeFormat(
-      'en-CA',
-      {
-        timeZone:
-          'America/Caracas',
-
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      },
-    ).format(new Date());
-  }
-
-  private obtenerRangoDia(
-    fecha: string,
-  ) {
-    /**
-     * Inicio:
-     * 2026-07-23 00:00 Venezuela
-     *
-     * JS lo convierte internamente a UTC.
-     */
-    const inicio = new Date(
-      `${fecha}T00:00:00.000${this.timezoneOffset}`,
-    );
-
-    /**
-     * Calculamos el siguiente día usando UTC
-     * solo para manipular YYYY-MM-DD.
-     */
-    const [
-      year,
-      month,
-      day,
-    ] = fecha
-      .split('-')
-      .map(Number);
-
-    const siguiente =
-      new Date(
-        Date.UTC(
-          year,
-          month - 1,
-          day + 1,
-        ),
-      );
-
-    const siguienteFecha = [
-      siguiente
-        .getUTCFullYear()
-        .toString()
-        .padStart(4, '0'),
-
-      (
-        siguiente.getUTCMonth() +
-        1
-      )
-        .toString()
-        .padStart(2, '0'),
-
-      siguiente
-        .getUTCDate()
-        .toString()
-        .padStart(2, '0'),
-    ].join('-');
-
-    const fin = new Date(
-      `${siguienteFecha}T00:00:00.000${this.timezoneOffset}`,
-    );
-
-    return {
-      inicio,
-      fin,
-    };
-  }
-
   private validarFecha(
     fecha: string,
   ) {
@@ -878,5 +803,24 @@ export class DashboardService {
         ) * 100,
       ) / 100
     );
+  }
+
+  private async obtenerZonaHorariaOrganizacion() {
+    const configuracion =
+      await this.prisma
+        .configuracionOrganizacion
+        .findFirst({
+          select: {
+            zonaHoraria: true,
+          },
+        });
+
+    if (!configuracion) {
+      throw new BadRequestException(
+        'La configuracion de la organizacion no existe.',
+      );
+    }
+
+    return configuracion.zonaHoraria;
   }
 }

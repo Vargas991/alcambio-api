@@ -19,8 +19,8 @@ import { FilterClienteLedgerDto } from './dto/filter-cliente-ledger';
 import { UpdateEstadoClienteDto } from './dto/update-estado-cliente.dto';
 import { FilterClientesCarteraDto } from './dto/filter-clientes-cartera.dto';
 import {
-  buildEndOfDayUtcFromLocal,
-  buildStartOfDayUtcFromLocal,
+  getDateKeyInTimeZone,
+  getUtcDayRange,
 } from 'src/common/helpers/date-range.helper';
 import { AjustarSaldoClienteDto } from './dto/ajustar-saldo-cliente.dto';
 
@@ -145,22 +145,37 @@ export class ClientesService {
   }
 
   async getLedger(id: string, filters: FilterClienteLedgerDto) {
-    const cliente = await this.prisma.cliente.findUnique({
-      where: {
-        id,
-      },
-      select: {
-        id: true,
-        nombre: true,
-        documento: true,
-        telefono: true,
-        estado: true,
-      },
-    });
+    const [cliente, configuracion] = await Promise.all([
+      this.prisma.cliente.findUnique({
+        where: {
+          id,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          documento: true,
+          telefono: true,
+          estado: true,
+        },
+      }),
+      this.prisma.configuracionOrganizacion.findFirst({
+        select: {
+          zonaHoraria: true,
+        },
+      }),
+    ]);
 
     if (!cliente) {
       throw new BadRequestException('El cliente no existe.');
     }
+
+    if (!configuracion) {
+      throw new BadRequestException(
+        'La configuracion de la organizacion no existe.',
+      );
+    }
+
+    const zonaHoraria = configuracion.zonaHoraria;
 
     const andConditions: Prisma.MovimientoClienteWhereInput[] = [
       {
@@ -200,11 +215,13 @@ export class ClientesService {
       const creadoEn: Prisma.DateTimeFilter = {};
 
       if (filters.desde) {
-        creadoEn.gte = buildStartOfDayUtcFromLocal(filters.desde);
+        const { inicio } = getUtcDayRange(filters.desde, zonaHoraria);
+        creadoEn.gte = inicio;
       }
 
       if (filters.hasta) {
-        creadoEn.lte = buildEndOfDayUtcFromLocal(filters.hasta);
+        const { fin } = getUtcDayRange(filters.hasta, zonaHoraria);
+        creadoEn.lt = fin;
       }
 
       andConditions.push({
@@ -353,7 +370,7 @@ export class ClientesService {
         continue;
       }
 
-      const fecha = mov.creadoEn.toISOString().slice(0, 10);
+      const fecha = getDateKeyInTimeZone(mov.creadoEn, zonaHoraria);
       const utilidadCop = Number(mov.operacion.utilidadCop ?? 0);
 
       utilidadPorDiaMap.set(
