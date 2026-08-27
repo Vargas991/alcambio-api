@@ -205,6 +205,7 @@ export class CuentasService {
         : TipoMovimientoCuenta.AJUSTE_SALIDA;
 
     const montoMovimiento = Math.abs(diferencia);
+    const reiniciaPromedio = !(saldoActual > 0 && saldoReal > 0);
 
     return this.prisma.$transaction(async (tx) => {
       const cuentaActualizada = await tx.cuenta.update({
@@ -225,7 +226,9 @@ export class CuentasService {
           saldoAnterior: saldoActual,
           saldoNuevo: saldoReal,
           descripcion: dto.descripcion,
-          referenciaTipo: 'AJUSTE_CUENTA',
+          referenciaTipo: reiniciaPromedio
+            ? 'AJUSTE_CUENTA_RESET_PROMEDIO'
+            : 'AJUSTE_CUENTA',
           referenciaId: id,
         },
       });
@@ -498,6 +501,23 @@ export class CuentasService {
     return cuenta;
   }
 
+  private async obtenerFechaReinicioPromedio(cuentaId: string) {
+    const ultimoReinicio = await this.prisma.movimientoCuenta.findFirst({
+      where: {
+        cuentaId,
+        referenciaTipo: 'AJUSTE_CUENTA_RESET_PROMEDIO',
+      },
+      orderBy: {
+        creadoEn: 'desc',
+      },
+      select: {
+        creadoEn: true,
+      },
+    });
+
+    return ultimoReinicio?.creadoEn ?? null;
+  }
+
   async obtenerPromedioCompraCuenta(cuentaId: string) {
     const cuenta = await this.prisma.cuenta.findUnique({
       where: {
@@ -525,6 +545,23 @@ export class CuentasService {
       };
     }
 
+    if (Number(cuenta.saldo) <= 0) {
+      return {
+        cuentaId: cuenta.id,
+        cuenta: cuenta.nombre,
+        moneda: cuenta.moneda,
+        saldoActual: Number(cuenta.saldo),
+        saldoCalculado: 0,
+        costoInventarioCop: 0,
+        promedioCompra: 0,
+        tasaMinimaVenta: 0,
+        totalOperacionesAnalizadas: 0,
+        aplica: true,
+      };
+    }
+
+    const fechaReinicio = await this.obtenerFechaReinicioPromedio(cuentaId);
+
     const operaciones = await this.prisma.operacion.findMany({
       where: {
         cuentaOperativaId: cuentaId,
@@ -532,6 +569,11 @@ export class CuentasService {
         tipo: {
           in: [TipoOperacion.COMPRA, TipoOperacion.VENTA],
         },
+        ...(fechaReinicio && {
+          creadoEn: {
+            gt: fechaReinicio,
+          },
+        }),
       },
       orderBy: [
         {
@@ -663,6 +705,30 @@ export class CuentasService {
       },
     });
 
+    const reinicios = await this.prisma.movimientoCuenta.findMany({
+      where: {
+        cuentaId: {
+          in: cuentasOperativas.map((cuenta) => cuenta.id),
+        },
+        referenciaTipo: 'AJUSTE_CUENTA_RESET_PROMEDIO',
+      },
+      orderBy: {
+        creadoEn: 'desc',
+      },
+      select: {
+        cuentaId: true,
+        creadoEn: true,
+      },
+    });
+
+    const fechaReinicioPorCuenta = new Map<string, Date>();
+
+    for (const reinicio of reinicios) {
+      if (!fechaReinicioPorCuenta.has(reinicio.cuentaId)) {
+        fechaReinicioPorCuenta.set(reinicio.cuentaId, reinicio.creadoEn);
+      }
+    }
+
     const operaciones = await this.prisma.operacion.findMany({
       where: {
         estado: EstadoOperacion.REGISTRADA,
@@ -685,8 +751,25 @@ export class CuentasService {
 
     return cuentasOperativas.map((cuenta) => {
       const operacionesCuenta = operaciones.filter(
-        (operacion) => operacion.cuentaOperativaId === cuenta.id,
+        (operacion) =>
+          operacion.cuentaOperativaId === cuenta.id &&
+          (!fechaReinicioPorCuenta.has(cuenta.id) ||
+            operacion.creadoEn > fechaReinicioPorCuenta.get(cuenta.id)!),
       );
+
+      if (Number(cuenta.saldo) <= 0) {
+        return {
+          cuentaId: cuenta.id,
+          cuenta: cuenta.nombre,
+          moneda: cuenta.moneda,
+          saldoActual: Number(cuenta.saldo),
+          saldoCalculado: 0,
+          costoInventarioCop: 0,
+          promedioCompra: 0,
+          tasaMinimaVenta: 0,
+          totalOperacionesAnalizadas: 0,
+        };
+      }
 
       return this.calcularPromedioCompraDeOperaciones({
         cuenta,
