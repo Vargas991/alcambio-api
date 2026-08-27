@@ -89,6 +89,10 @@ enum EstadoSalida {
   CANCELADA
 }
 
+enum Modo4x1000Proveedor {
+  SUMAR
+  RESTAR
+}
 enum EstadoEntrada {
   REGISTRADA
   CANCELADA
@@ -252,6 +256,8 @@ model Salida {
   cuentaAplica4x1000         Boolean @default(false)
   impuestoCuenta4x1000Cop    Decimal @default(0)
   totalDebitadoCop           Decimal @default(0)
+
+  modo4x1000Proveedor Modo4x1000Proveedor? @default(RESTAR)
 
   estado EstadoSalida @default(REGISTRADA)
 
