@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -9,7 +10,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-import { TipoSalida } from '../../../generated/prisma/client';
+import { Modo4x1000Proveedor, TipoSalida } from '../../../generated/prisma/client';
 
 export class CreateSalidaDto {
   @IsEnum(TipoSalida)
@@ -23,6 +24,10 @@ export class CreateSalidaDto {
   @IsString()
   @IsNotEmpty()
   cuentaId!: string;
+
+  @IsOptional()
+  @IsEnum(Modo4x1000Proveedor)
+  modo4x1000Proveedor?: Modo4x1000Proveedor;
 
   /**
    * Monto base que se quiere pagar.

@@ -59,122 +59,244 @@ export class SalidasService {
     return salida;
   }
 
-  private async crearPagoAcreedor(
-    tx: Prisma.TransactionClient,
-    dto: CreateSalidaDto,
-  ) {
-    const acreedorId = dto.acreedorId;
+ private async crearPagoAcreedor(
+  tx: Prisma.TransactionClient,
+  dto: CreateSalidaDto,
+) {
+  const acreedorId = dto.acreedorId;
 
-    if (!acreedorId) {
-      throw new BadRequestException('El pago a acreedor requiere acreedorId.');
-    }
-
-    const acreedor = await tx.cliente.findUnique({
-      where: {
-        id: acreedorId,
-      },
-    });
-
-    if (!acreedor) {
-      throw new NotFoundException('El acreedor no existe.');
-    }
-
-    const cuenta = await this.validarCuentaParaSalida(tx, dto.cuentaId);
-
-    const calculoSalida = this.calcularSalidaCon4x1000({
-      montoBaseCop: dto.montoCop,
-      proveedorCobra4x1000: dto.proveedorCobra4x1000 ?? false,
-      cuentaAplica4x1000: cuenta.aplica4x1000,
-    });
-
-    const saldoActual = Number(cuenta.saldo);
-
-    if (saldoActual < calculoSalida.totalDebitadoCop) {
-      throw new BadRequestException(
-        'La cuenta no tiene saldo suficiente para registrar esta salida.',
-      );
-    }
-
-    const saldoNuevo = saldoActual - calculoSalida.totalDebitadoCop;
-
-    const salida = await tx.salida.create({
-      data: {
-        tipo: TipoSalida.PAGO_ACREEDOR,
-        acreedorId,
-        cuentaId: dto.cuentaId,
-
-        /**
-         * montoCop queda como el monto que reduce deuda con el acreedor.
-         * Si el proveedor cobra 4x1000, incluye ese impuesto.
-         */
-        montoCop: calculoSalida.montoEnviadoCop,
-
-        /**
-         * Trazabilidad 4x1000.
-         */
-        montoBaseCop: calculoSalida.montoBaseCop,
-        proveedorCobra4x1000: calculoSalida.proveedorCobra4x1000,
-        impuestoProveedor4x1000Cop: calculoSalida.impuestoProveedor4x1000Cop,
-        montoEnviadoCop: calculoSalida.montoEnviadoCop,
-        cuentaAplica4x1000: calculoSalida.cuentaAplica4x1000,
-        impuestoCuenta4x1000Cop: calculoSalida.impuestoCuenta4x1000Cop,
-        totalDebitadoCop: calculoSalida.totalDebitadoCop,
-
-        descripcion: dto.descripcion,
-        referencia: dto.referencia,
-        notas: dto.notas,
-      },
-    });
-
-    await tx.cuenta.update({
-      where: {
-        id: cuenta.id,
-      },
-      data: {
-        saldo: saldoNuevo,
-      },
-    });
-
-    await tx.movimientoCuenta.create({
-      data: {
-        cuentaId: cuenta.id,
-        tipo: TipoMovimientoCuenta.SALIDA,
-        monto: calculoSalida.totalDebitadoCop,
-        moneda: cuenta.moneda,
-        saldoAnterior: saldoActual,
-        saldoNuevo,
-        descripcion: dto.descripcion ?? `Pago a acreedor ${acreedor.nombre}`,
-        referenciaTipo: 'SALIDA',
-        referenciaId: salida.id,
-      },
-    });
-
-    await tx.movimientoCliente.create({
-      data: {
-        clienteId: acreedorId,
-        tipo: TipoMovimientoCliente.PAGO,
-        salidaId: salida.id,
-        monedaTransaccion: 'COP',
-        montoTransaccion: calculoSalida.montoBaseCop,
-
-        /**
-         * PAGO al acreedor:
-         * aumenta el débito del acreedor para reducir el saldo negativo.
-         */
-        debitoCop: calculoSalida.montoBaseCop,
-        creditoCop: 0,
-
-        descripcion: dto.descripcion ?? `Pago a acreedor ${acreedor.nombre}`,
-      },
-    });
-
-    return tx.salida.findUnique({
-      where: {
-        id: salida.id,
-      },
-      include: this.salidaInclude(),
-    });
+  if (!acreedorId) {
+    throw new BadRequestException(
+      'El pago a acreedor requiere acreedorId.',
+    );
   }
+
+  const acreedor = await tx.cliente.findUnique({
+    where: {
+      id: acreedorId,
+    },
+  });
+
+  if (!acreedor) {
+    throw new NotFoundException(
+      'El acreedor no existe.',
+    );
+  }
+
+  const cuenta =
+    await this.validarCuentaParaSalida(
+      tx,
+      dto.cuentaId,
+    );
+
+  const calculoSalida =
+    this.calcularSalidaCon4x1000({
+      montoBaseCop: dto.montoCop,
+
+      proveedorCobra4x1000:
+        dto.proveedorCobra4x1000 ?? false,
+
+      modo4x1000Proveedor:
+        dto.modo4x1000Proveedor ?? 'SUMAR',
+
+      cuentaAplica4x1000:
+        cuenta.aplica4x1000,
+    });
+
+  const saldoActual =
+    Number(cuenta.saldo);
+
+  if (
+    saldoActual <
+    calculoSalida.totalDebitadoCop
+  ) {
+    throw new BadRequestException(
+      'La cuenta no tiene saldo suficiente para registrar esta salida.',
+    );
+  }
+
+  const saldoNuevo =
+    saldoActual -
+    calculoSalida.totalDebitadoCop;
+
+  const salida =
+    await tx.salida.create({
+      data: {
+        tipo:
+          TipoSalida.PAGO_ACREEDOR,
+
+        acreedorId,
+
+        cuentaId:
+          dto.cuentaId,
+
+        /**
+         * Lo que efectivamente reduce
+         * la deuda del acreedor.
+         *
+         * SUMAR:
+         * montoBaseCop
+         *
+         * RESTAR:
+         * montoBaseCop - 4x1000 proveedor
+         */
+        montoCop:
+          calculoSalida.montoAbonadoCop,
+
+        montoBaseCop:
+          calculoSalida.montoBaseCop,
+
+        proveedorCobra4x1000:
+          calculoSalida.proveedorCobra4x1000,
+
+        /**
+         * Guardamos el modo solamente cuando
+         * el proveedor realmente cobra 4x1000.
+         */
+        modo4x1000Proveedor:
+          calculoSalida.proveedorCobra4x1000
+            ? calculoSalida.modo4x1000Proveedor
+            : null,
+
+        impuestoProveedor4x1000Cop:
+          calculoSalida
+            .impuestoProveedor4x1000Cop,
+
+        /**
+         * Dinero realmente enviado
+         * hacia el proveedor.
+         */
+        montoEnviadoCop:
+          calculoSalida.montoEnviadoCop,
+
+        cuentaAplica4x1000:
+          calculoSalida.cuentaAplica4x1000,
+
+        impuestoCuenta4x1000Cop:
+          calculoSalida
+            .impuestoCuenta4x1000Cop,
+
+        /**
+         * Todo lo debitado de nuestra cuenta.
+         *
+         * Incluye:
+         * - monto enviado
+         * - 4x1000 propio de la cuenta
+         */
+        totalDebitadoCop:
+          calculoSalida.totalDebitadoCop,
+
+        descripcion:
+          dto.descripcion,
+
+        referencia:
+          dto.referencia,
+
+        notas:
+          dto.notas,
+      },
+    });
+
+  /**
+   * Actualizamos saldo de nuestra cuenta.
+   */
+  await tx.cuenta.update({
+    where: {
+      id: cuenta.id,
+    },
+
+    data: {
+      saldo: saldoNuevo,
+    },
+  });
+
+  /**
+   * Ledger de nuestra cuenta.
+   *
+   * Aquí debe registrarse TODO lo
+   * que realmente salió de la cuenta.
+   */
+  await tx.movimientoCuenta.create({
+    data: {
+      cuentaId:
+        cuenta.id,
+
+      tipo:
+        TipoMovimientoCuenta.SALIDA,
+
+      monto:
+        calculoSalida.totalDebitadoCop,
+
+      moneda:
+        cuenta.moneda,
+
+      saldoAnterior:
+        saldoActual,
+
+      saldoNuevo,
+
+      descripcion:
+        dto.descripcion ??
+        `Pago a acreedor ${acreedor.nombre}`,
+
+      referenciaTipo:
+        'SALIDA',
+
+      referenciaId:
+        salida.id,
+    },
+  });
+
+  /**
+   * Ledger del acreedor.
+   *
+   * Solo debe reducirse la deuda por
+   * el monto efectivamente abonado.
+   *
+   * SUMAR:
+   * 1.000.000
+   *
+   * RESTAR:
+   * 996.000
+   */
+  await tx.movimientoCliente.create({
+    data: {
+      clienteId:
+        acreedorId,
+
+      tipo:
+        TipoMovimientoCliente.PAGO,
+
+      salidaId:
+        salida.id,
+
+      monedaTransaccion:
+        'COP',
+
+      montoTransaccion:
+        calculoSalida.montoAbonadoCop,
+
+      debitoCop:
+        calculoSalida.montoAbonadoCop,
+
+      creditoCop:
+        0,
+
+      descripcion:
+        dto.descripcion ??
+        `Pago a acreedor ${acreedor.nombre}`,
+    },
+  });
+
+  return tx.salida.findUnique({
+    where: {
+      id: salida.id,
+    },
+
+    include:
+      this.salidaInclude(),
+  });
+}
 
   private async crearSalidaSimple(
     tx: Prisma.TransactionClient,
@@ -489,6 +611,8 @@ private async aplicarPagoAcreedorEditado(
     montoBaseCop: dto.montoCop,
     proveedorCobra4x1000:
       dto.proveedorCobra4x1000 ?? false,
+    modo4x1000Proveedor:
+      dto.modo4x1000Proveedor ?? 'SUMAR',
     cuentaAplica4x1000:
       cuenta.aplica4x1000,
   });
@@ -519,10 +643,13 @@ private async aplicarPagoAcreedorEditado(
       cuentaId: cuenta.id,
 
       /**
-       * Mantener la semántica que ya tienes:
-       * montoCop = lo enviado al acreedor.
+       * montoCop representa lo que efectivamente
+       * reduce la deuda del acreedor.
+       *
+       * SUMAR  -> montoBaseCop
+       * RESTAR -> montoBaseCop - 4x1000 proveedor
        */
-      montoCop: calculo.montoEnviadoCop,
+      montoCop: calculo.montoAbonadoCop,
 
       montoBaseCop:
         calculo.montoBaseCop,
@@ -588,12 +715,15 @@ private async aplicarPagoAcreedorEditado(
   });
 
   /**
-   * IMPORTANTE:
+   * La deuda del acreedor se reduce por el monto
+   * efectivamente abonado.
    *
-   * La deuda con el acreedor solamente baja
-   * por montoBaseCop.
+   * SUMAR:
+   * montoAbonadoCop = montoBaseCop
    *
-   * Los impuestos no reducen deuda.
+   * RESTAR:
+   * montoAbonadoCop =
+   * montoBaseCop - 4x1000 proveedor
    */
   await tx.movimientoCliente.create({
     data: {
@@ -607,10 +737,10 @@ private async aplicarPagoAcreedorEditado(
       monedaTransaccion: 'COP',
 
       montoTransaccion:
-        calculo.montoBaseCop,
+        calculo.montoAbonadoCop,
 
       debitoCop:
-        calculo.montoBaseCop,
+        calculo.montoAbonadoCop,
 
       creditoCop: 0,
 
@@ -939,38 +1069,105 @@ async eliminar(id: string) {
   }
 
   private calcularSalidaCon4x1000(params: {
-    montoBaseCop: number;
-    proveedorCobra4x1000: boolean;
-    cuentaAplica4x1000: boolean;
-  }) {
-    const montoBaseCop = this.redondearDosDecimales(params.montoBaseCop);
-
-    const impuestoProveedor4x1000Cop = params.proveedorCobra4x1000
-      ? this.redondearDosDecimales(montoBaseCop * 0.004)
-      : 0;
-
-    const montoEnviadoCop = this.redondearDosDecimales(
-      montoBaseCop + impuestoProveedor4x1000Cop,
+  montoBaseCop: number;
+  proveedorCobra4x1000: boolean;
+  modo4x1000Proveedor?: 'SUMAR' | 'RESTAR';
+  cuentaAplica4x1000: boolean;
+}) {
+  const montoBaseCop =
+    this.redondearDosDecimales(
+      params.montoBaseCop,
     );
 
-    const impuestoCuenta4x1000Cop = params.cuentaAplica4x1000
-      ? this.redondearDosDecimales(montoEnviadoCop * 0.004)
+  const modo4x1000Proveedor =
+    params.modo4x1000Proveedor ?? 'SUMAR';
+
+  const impuestoProveedor4x1000Cop =
+    params.proveedorCobra4x1000
+      ? this.redondearDosDecimales(
+          montoBaseCop * 0.004,
+        )
       : 0;
 
-    const totalDebitadoCop = this.redondearDosDecimales(
-      montoEnviadoCop + impuestoCuenta4x1000Cop,
-    );
+  let montoEnviadoCop = montoBaseCop;
+  let montoAbonadoCop = montoBaseCop;
 
-    return {
-      montoBaseCop,
-      proveedorCobra4x1000: params.proveedorCobra4x1000,
-      impuestoProveedor4x1000Cop,
-      montoEnviadoCop,
-      cuentaAplica4x1000: params.cuentaAplica4x1000,
-      impuestoCuenta4x1000Cop,
-      totalDebitadoCop,
-    };
+  /**
+   * SUMAR:
+   * El proveedor debe recibir el monto base completo.
+   * Su 4x1000 se agrega al dinero enviado.
+   */
+  if (
+    params.proveedorCobra4x1000 &&
+    modo4x1000Proveedor === 'SUMAR'
+  ) {
+    montoEnviadoCop =
+      this.redondearDosDecimales(
+        montoBaseCop +
+          impuestoProveedor4x1000Cop,
+      );
+
+    montoAbonadoCop = montoBaseCop;
   }
+
+  /**
+   * RESTAR:
+   * El dinero enviado sigue siendo el monto base,
+   * pero el proveedor descuenta su 4x1000.
+   */
+  if (
+    params.proveedorCobra4x1000 &&
+    modo4x1000Proveedor === 'RESTAR'
+  ) {
+    montoEnviadoCop = montoBaseCop;
+
+    montoAbonadoCop =
+      this.redondearDosDecimales(
+        montoBaseCop -
+          impuestoProveedor4x1000Cop,
+      );
+  }
+
+  /**
+   * El 4x1000 propio de la cuenta se calcula
+   * sobre lo que realmente se debita/envía
+   * desde la cuenta.
+   */
+  const impuestoCuenta4x1000Cop =
+    params.cuentaAplica4x1000
+      ? this.redondearDosDecimales(
+          montoEnviadoCop * 0.004,
+        )
+      : 0;
+
+  const totalDebitadoCop =
+    this.redondearDosDecimales(
+      montoEnviadoCop +
+        impuestoCuenta4x1000Cop,
+    );
+
+  return {
+    montoBaseCop,
+
+    proveedorCobra4x1000:
+      params.proveedorCobra4x1000,
+
+    modo4x1000Proveedor,
+
+    impuestoProveedor4x1000Cop,
+
+    montoEnviadoCop,
+
+    montoAbonadoCop,
+
+    cuentaAplica4x1000:
+      params.cuentaAplica4x1000,
+
+    impuestoCuenta4x1000Cop,
+
+    totalDebitadoCop,
+  };
+}
 
   private redondearDosDecimales(valor: number) {
     return Math.round((valor + Number.EPSILON) * 100) / 100;
