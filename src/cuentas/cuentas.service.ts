@@ -23,7 +23,7 @@ import { UpdateCuentaDto } from './dto/update-cuenta.dto';
 export class CuentasService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateCuentaDto) {
+  async create(dto: CreateCuentaDto, tenantId: string) {
     this.validarCuentaPorCategoria({
       categoria: dto.categoria,
       moneda: dto.moneda,
@@ -42,12 +42,14 @@ export class CuentasService {
           saldo: saldoInicial,
           aplica4x1000: dto.aplica4x1000 ?? false,
           notas: dto.notas,
+          tenantId,
         },
       });
 
       if (saldoInicial > 0) {
         await tx.movimientoCuenta.create({
           data: {
+            tenantId,
             cuentaId: cuenta.id,
             tipo: TipoMovimientoCuenta.AJUSTE_ENTRADA,
             monto: saldoInicial,
@@ -65,17 +67,21 @@ export class CuentasService {
     });
   }
 
-  findAll() {
+  findAll(tenantId: string) {
     return this.prisma.cuenta.findMany({
+      where: {
+        tenantId,
+      },
       orderBy: {
         creadoEn: 'desc',
       },
     });
   }
 
-  findBase() {
+  findBase(tenantId: string) {
     return this.prisma.cuenta.findMany({
       where: {
+        tenantId,
         categoria: CategoriaCuenta.BASE_COP,
       },
       orderBy: {
@@ -84,9 +90,10 @@ export class CuentasService {
     });
   }
 
-  findOperativas() {
+  findOperativas(tenantId: string) {
     return this.prisma.cuenta.findMany({
       where: {
+        tenantId,
         categoria: CategoriaCuenta.OPERATIVA,
       },
       orderBy: {
@@ -95,10 +102,11 @@ export class CuentasService {
     });
   }
 
-  async findOne(id: string) {
-    const cuenta = await this.prisma.cuenta.findUnique({
+  async findOne(id: string, tenantId: string) {
+    const cuenta = await this.prisma.cuenta.findFirst({
       where: {
         id,
+        tenantId,
       },
       include: {
         movimientos: {
@@ -117,12 +125,13 @@ export class CuentasService {
     return cuenta;
   }
 
-  async getMovimientos(id: string) {
-    await this.validarCuentaExiste(id);
+  async getMovimientos(id: string, tenantId: string) {
+    await this.validarCuentaExiste(id, tenantId);
 
     return this.prisma.movimientoCuenta.findMany({
       where: {
         cuentaId: id,
+        tenantId,
       },
       orderBy: {
         creadoEn: 'desc',
@@ -130,10 +139,11 @@ export class CuentasService {
     });
   }
 
-  async update(id: string, dto: UpdateCuentaDto) {
-    const cuenta = await this.prisma.cuenta.findUnique({
+  async update(id: string, dto: UpdateCuentaDto, tenantId: string) {
+    const cuenta = await this.prisma.cuenta.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -167,8 +177,8 @@ export class CuentasService {
     });
   }
 
-  async updateEstado(id: string, dto: UpdateEstadoCuentaDto) {
-    await this.validarCuentaExiste(id);
+  async updateEstado(id: string, dto: UpdateEstadoCuentaDto, tenantId: string) {
+    await this.validarCuentaExiste(id, tenantId);
 
     return this.prisma.cuenta.update({
       where: {
@@ -180,10 +190,11 @@ export class CuentasService {
     });
   }
 
-  async ajustarSaldo(id: string, dto: AjustarSaldoCuentaDto) {
-    const cuenta = await this.prisma.cuenta.findUnique({
+  async ajustarSaldo(id: string, dto: AjustarSaldoCuentaDto, tenantId: string) {
+    const cuenta = await this.prisma.cuenta.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -219,6 +230,7 @@ export class CuentasService {
 
       await tx.movimientoCuenta.create({
         data: {
+          tenantId,
           cuentaId: id,
           tipo: tipoMovimiento,
           monto: montoMovimiento,
@@ -237,10 +249,11 @@ export class CuentasService {
     });
   }
 
-  async registrarGasto(id: string, dto: CreateGastoCuentaDto) {
-    const cuenta = await this.prisma.cuenta.findUnique({
+  async registrarGasto(id: string, dto: CreateGastoCuentaDto, tenantId: string) {
+    const cuenta = await this.prisma.cuenta.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -295,6 +308,7 @@ export class CuentasService {
 
       await tx.movimientoCuenta.create({
         data: {
+          tenantId,
           cuentaId: id,
           tipo: TipoMovimientoCuenta.GASTO,
           monto: calculoSalida.totalDebitado,
@@ -311,16 +325,17 @@ export class CuentasService {
     });
   }
 
-  async trasladar(dto: CreateTrasladoCuentaDto) {
+  async trasladar(dto: CreateTrasladoCuentaDto, tenantId: string) {
     if (dto.cuentaOrigenId === dto.cuentaDestinoId) {
       throw new BadRequestException(
         'La cuenta origen y destino no pueden ser la misma.',
       );
     }
 
-    const cuentaOrigen = await this.prisma.cuenta.findUnique({
+    const cuentaOrigen = await this.prisma.cuenta.findFirst({
       where: {
         id: dto.cuentaOrigenId,
+        tenantId,
       },
     });
 
@@ -328,9 +343,10 @@ export class CuentasService {
       throw new NotFoundException('La cuenta origen no existe.');
     }
 
-    const cuentaDestino = await this.prisma.cuenta.findUnique({
+    const cuentaDestino = await this.prisma.cuenta.findFirst({
       where: {
         id: dto.cuentaDestinoId,
+        tenantId,
       },
     });
 
@@ -394,6 +410,7 @@ export class CuentasService {
 
       await tx.movimientoCuenta.create({
         data: {
+          tenantId,
           cuentaId: cuentaOrigen.id,
           tipo: TipoMovimientoCuenta.TRASLADO_SALIDA,
           monto: calculoSalidaOrigen.totalDebitado,
@@ -408,6 +425,7 @@ export class CuentasService {
 
       await tx.movimientoCuenta.create({
         data: {
+          tenantId,
           cuentaId: cuentaDestino.id,
           tipo: TipoMovimientoCuenta.TRASLADO_ENTRADA,
           monto: dto.monto,
@@ -484,10 +502,11 @@ export class CuentasService {
     }
   }
 
-  private async validarCuentaExiste(id: string) {
-    const cuenta = await this.prisma.cuenta.findUnique({
+  private async validarCuentaExiste(id: string, tenantId: string) {
+    const cuenta = await this.prisma.cuenta.findFirst({
       where: {
         id,
+        tenantId,
       },
       select: {
         id: true,
@@ -501,10 +520,11 @@ export class CuentasService {
     return cuenta;
   }
 
-  private async obtenerFechaReinicioPromedio(cuentaId: string) {
+  private async obtenerFechaReinicioPromedio(cuentaId: string, tenantId: string) {
     const ultimoReinicio = await this.prisma.movimientoCuenta.findFirst({
       where: {
         cuentaId,
+        tenantId,
         referenciaTipo: 'AJUSTE_CUENTA_RESET_PROMEDIO',
       },
       orderBy: {
@@ -518,10 +538,11 @@ export class CuentasService {
     return ultimoReinicio?.creadoEn ?? null;
   }
 
-  async obtenerPromedioCompraCuenta(cuentaId: string) {
-    const cuenta = await this.prisma.cuenta.findUnique({
+  async obtenerPromedioCompraCuenta(cuentaId: string, tenantId: string) {
+    const cuenta = await this.prisma.cuenta.findFirst({
       where: {
         id: cuentaId,
+        tenantId,
       },
     });
 
@@ -560,10 +581,11 @@ export class CuentasService {
       };
     }
 
-    const fechaReinicio = await this.obtenerFechaReinicioPromedio(cuentaId);
+    const fechaReinicio = await this.obtenerFechaReinicioPromedio(cuentaId, tenantId);
 
     const operaciones = await this.prisma.operacion.findMany({
       where: {
+        tenantId,
         cuentaOperativaId: cuentaId,
         estado: EstadoOperacion.REGISTRADA,
         tipo: {
@@ -694,9 +716,12 @@ export class CuentasService {
     };
   }
 
-  async obtenerPromediosCompraCuentasOperativas() {
+  async obtenerPromediosCompraCuentasOperativas(tenantId?: string) {
     const cuentasOperativas = await this.prisma.cuenta.findMany({
       where: {
+        ...(tenantId && {
+          tenantId,
+        }),
         categoria: CategoriaCuenta.OPERATIVA,
         estado: EstadoEntidad.ACTIVO,
       },
@@ -707,6 +732,9 @@ export class CuentasService {
 
     const reinicios = await this.prisma.movimientoCuenta.findMany({
       where: {
+        ...(tenantId && {
+          tenantId,
+        }),
         cuentaId: {
           in: cuentasOperativas.map((cuenta) => cuenta.id),
         },
@@ -731,6 +759,9 @@ export class CuentasService {
 
     const operaciones = await this.prisma.operacion.findMany({
       where: {
+        ...(tenantId && {
+          tenantId,
+        }),
         estado: EstadoOperacion.REGISTRADA,
         cuentaOperativaId: {
           in: cuentasOperativas.map((cuenta) => cuenta.id),

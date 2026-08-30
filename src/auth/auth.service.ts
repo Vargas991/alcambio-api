@@ -24,6 +24,14 @@ export class AuthService {
       throw new UnauthorizedException('Usuario inactivo.');
     }
 
+    if (usuario.tenant && !usuario.tenant.activo) {
+      throw new UnauthorizedException('Tenant inactivo.');
+    }
+
+    if (usuario.rol !== 'SUPER_ADMIN' && !usuario.tenantId) {
+      throw new UnauthorizedException('Usuario sin tenant asignado.');
+    }
+
     const passwordValido = await bcrypt.compare(dto.password, usuario.password);
 
     if (!passwordValido) {
@@ -34,11 +42,10 @@ export class AuthService {
       sub: usuario.id,
       correo: usuario.correo,
       rol: usuario.rol,
+      tenantId: usuario.tenantId,
     };
 
     const accessToken = await this.jwtService.signAsync(payload);
-
-    console.log(accessToken);
 
     return {
       accessToken,
@@ -48,6 +55,8 @@ export class AuthService {
         correo: usuario.correo,
         rol: usuario.rol,
         estado: usuario.estado,
+        tenantId: usuario.tenantId,
+        tenant: usuario.tenant,
       },
     };
   }

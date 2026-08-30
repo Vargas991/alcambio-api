@@ -10,6 +10,7 @@ export interface JwtPayload {
   sub: string;
   correo: string;
   rol: string;
+  tenantId?: string | null;
 }
 
 @Injectable()
@@ -36,6 +37,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!usuario || usuario.estado !== EstadoEntidad.ACTIVO) {
       throw new UnauthorizedException('Usuario no autorizado.');
+    }
+
+    if (usuario.tenant && !usuario.tenant.activo) {
+      throw new UnauthorizedException('Tenant inactivo.');
+    }
+
+    if (usuario.rol !== 'SUPER_ADMIN' && !usuario.tenantId) {
+      throw new UnauthorizedException('Usuario sin tenant asignado.');
     }
 
     return usuario;

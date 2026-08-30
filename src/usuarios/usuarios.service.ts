@@ -20,7 +20,13 @@ import { UpdatePasswordUsuarioDto } from './dto/update-password-usuario.dto';
 export class UsuariosService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateUsuarioDto) {
+  async create(dto: CreateUsuarioDto, tenantId: string) {
+    if (dto.rol === RolUsuario.SUPER_ADMIN) {
+      throw new BadRequestException(
+        'La creacion de SUPER_ADMIN esta reservada a rutas administrativas.',
+      );
+    }
+
     const existe = await this.prisma.usuario.findUnique({
       where: {
         correo: dto.correo,
@@ -40,13 +46,17 @@ export class UsuariosService {
         password: passwordHash,
         rol: dto.rol ?? RolUsuario.OPERADOR,
         estado: EstadoEntidad.ACTIVO,
+        tenantId,
       },
       select: this.usuarioSelect(),
     });
   }
 
-  async findAll() {
+  async findAll(tenantId: string) {
     return this.prisma.usuario.findMany({
+      where: {
+        tenantId,
+      },
       select: this.usuarioSelect(),
       orderBy: {
         creadoEn: 'desc',
@@ -54,10 +64,11 @@ export class UsuariosService {
     });
   }
 
-  async findOne(id: string) {
-    const usuario = await this.prisma.usuario.findUnique({
+  async findOne(id: string, tenantId: string) {
+    const usuario = await this.prisma.usuario.findFirst({
       where: {
         id,
+        tenantId,
       },
       select: this.usuarioSelect(),
     });
@@ -69,8 +80,14 @@ export class UsuariosService {
     return usuario;
   }
 
-  async update(id: string, dto: UpdateUsuarioDto) {
-    await this.validarUsuarioExiste(id);
+  async update(id: string, dto: UpdateUsuarioDto, tenantId: string) {
+    await this.validarUsuarioExiste(id, tenantId);
+
+    if (dto.rol === RolUsuario.SUPER_ADMIN) {
+      throw new BadRequestException(
+        'No se puede asignar SUPER_ADMIN desde administracion de tenant.',
+      );
+    }
 
     if (dto.correo) {
       const usuarioConCorreo = await this.prisma.usuario.findUnique({
@@ -97,8 +114,8 @@ export class UsuariosService {
     });
   }
 
-  async updateEstado(id: string, dto: UpdateEstadoUsuarioDto) {
-    await this.validarUsuarioExiste(id);
+  async updateEstado(id: string, dto: UpdateEstadoUsuarioDto, tenantId: string) {
+    await this.validarUsuarioExiste(id, tenantId);
 
     return this.prisma.usuario.update({
       where: {
@@ -111,8 +128,12 @@ export class UsuariosService {
     });
   }
 
-  async updatePassword(id: string, dto: UpdatePasswordUsuarioDto) {
-    await this.validarUsuarioExiste(id);
+  async updatePassword(
+    id: string,
+    dto: UpdatePasswordUsuarioDto,
+    tenantId: string,
+  ) {
+    await this.validarUsuarioExiste(id, tenantId);
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
@@ -127,8 +148,8 @@ export class UsuariosService {
     });
   }
 
-  async remove(id: string) {
-    await this.validarUsuarioExiste(id);
+  async remove(id: string, tenantId: string) {
+    await this.validarUsuarioExiste(id, tenantId);
 
     return this.prisma.usuario.update({
       where: {
@@ -150,6 +171,16 @@ export class UsuariosService {
       where: {
         correo,
       },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            nombre: true,
+            slug: true,
+            activo: true,
+          },
+        },
+      },
     });
   }
 
@@ -166,10 +197,11 @@ export class UsuariosService {
     });
   }
 
-  private async validarUsuarioExiste(id: string) {
-    const usuario = await this.prisma.usuario.findUnique({
+  private async validarUsuarioExiste(id: string, tenantId: string) {
+    const usuario = await this.prisma.usuario.findFirst({
       where: {
         id,
+        tenantId,
       },
       select: {
         id: true,
@@ -190,6 +222,15 @@ export class UsuariosService {
       correo: true,
       rol: true,
       estado: true,
+      tenantId: true,
+      tenant: {
+        select: {
+          id: true,
+          nombre: true,
+          slug: true,
+          activo: true,
+        },
+      },
       creadoEn: true,
       actualizadoEn: true,
     };

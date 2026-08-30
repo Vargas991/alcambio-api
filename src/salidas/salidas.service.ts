@@ -23,20 +23,23 @@ import { UpdateSalidaDto } from './dto/update-salida.dto';
 export class SalidasService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateSalidaDto) {
+  async create(dto: CreateSalidaDto, tenantId: string) {
     this.validarDtoPorTipo(dto);
 
     return this.prisma.$transaction(async (tx) => {
       if (dto.tipo === TipoSalida.PAGO_ACREEDOR) {
-        return this.crearPagoAcreedor(tx, dto);
+        return this.crearPagoAcreedor(tx, dto, tenantId);
       }
 
-      return this.crearSalidaSimple(tx, dto);
+      return this.crearSalidaSimple(tx, dto, tenantId);
     });
   }
 
-  findAll() {
+  findAll(tenantId: string) {
     return this.prisma.salida.findMany({
+      where: {
+        tenantId,
+      },
       orderBy: {
         creadoEn: 'desc',
       },
@@ -44,10 +47,11 @@ export class SalidasService {
     });
   }
 
-  async findOne(id: string) {
-    const salida = await this.prisma.salida.findUnique({
+  async findOne(id: string, tenantId: string) {
+    const salida = await this.prisma.salida.findFirst({
       where: {
         id,
+        tenantId,
       },
       include: this.salidaInclude(),
     });
@@ -62,6 +66,7 @@ export class SalidasService {
  private async crearPagoAcreedor(
   tx: Prisma.TransactionClient,
   dto: CreateSalidaDto,
+  tenantId: string,
 ) {
   const acreedorId = dto.acreedorId;
 
@@ -71,9 +76,10 @@ export class SalidasService {
     );
   }
 
-  const acreedor = await tx.cliente.findUnique({
+  const acreedor = await tx.cliente.findFirst({
     where: {
       id: acreedorId,
+      tenantId,
     },
   });
 
@@ -87,6 +93,7 @@ export class SalidasService {
     await this.validarCuentaParaSalida(
       tx,
       dto.cuentaId,
+      tenantId,
     );
 
   const calculoSalida =
@@ -122,6 +129,7 @@ export class SalidasService {
   const salida =
     await tx.salida.create({
       data: {
+        tenantId,
         tipo:
           TipoSalida.PAGO_ACREEDOR,
 
@@ -218,6 +226,7 @@ export class SalidasService {
    */
   await tx.movimientoCuenta.create({
     data: {
+      tenantId,
       cuentaId:
         cuenta.id,
 
@@ -261,6 +270,7 @@ export class SalidasService {
    */
   await tx.movimientoCliente.create({
     data: {
+      tenantId,
       clienteId:
         acreedorId,
 
@@ -301,8 +311,9 @@ export class SalidasService {
   private async crearSalidaSimple(
     tx: Prisma.TransactionClient,
     dto: CreateSalidaDto,
+    tenantId: string,
   ) {
-    const cuenta = await this.validarCuentaParaSalida(tx, dto.cuentaId);
+    const cuenta = await this.validarCuentaParaSalida(tx, dto.cuentaId, tenantId);
 
     /**
      * En GASTO y RETIRO no hay proveedor cobrando 4x1000.
@@ -327,6 +338,7 @@ export class SalidasService {
 
     const salida = await tx.salida.create({
       data: {
+        tenantId,
         tipo: dto.tipo,
         acreedorId: null,
         cuentaId: dto.cuentaId,
@@ -364,6 +376,7 @@ export class SalidasService {
 
     await tx.movimientoCuenta.create({
       data: {
+        tenantId,
         cuentaId: cuenta.id,
         tipo:
           dto.tipo === TipoSalida.GASTO
@@ -387,10 +400,11 @@ export class SalidasService {
     });
   }
 
-  async cancelar(id: string, dto: CancelarSalidaDto) {
-    const salida = await this.prisma.salida.findUnique({
+  async cancelar(id: string, dto: CancelarSalidaDto, tenantId: string) {
+    const salida = await this.prisma.salida.findFirst({
       where: {
         id,
+        tenantId,
       },
       include: {
         cuenta: true,
@@ -407,9 +421,10 @@ export class SalidasService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const cuenta = await tx.cuenta.findUnique({
+      const cuenta = await tx.cuenta.findFirst({
         where: {
           id: salida.cuentaId,
+          tenantId,
         },
       });
 
@@ -442,6 +457,7 @@ export class SalidasService {
 
       await tx.movimientoCuenta.create({
         data: {
+          tenantId,
           cuentaId: cuenta.id,
           tipo: TipoMovimientoCuenta.AJUSTE_ENTRADA,
           monto: montoSalida,
@@ -457,6 +473,7 @@ export class SalidasService {
       for (const movimiento of salida.movimientosCliente) {
         await tx.movimientoCliente.create({
           data: {
+            tenantId,
             clienteId: movimiento.clienteId,
             tipo: TipoMovimientoCliente.CANCELACION,
             salidaId: salida.id,
@@ -507,10 +524,12 @@ export class SalidasService {
     montoCop: Prisma.Decimal;
     totalDebitadoCop: Prisma.Decimal | null;
   },
+  tenantId: string,
 ) {
-  const cuenta = await tx.cuenta.findUnique({
+  const cuenta = await tx.cuenta.findFirst({
     where: {
       id: salida.cuentaId,
+      tenantId,
     },
   });
 
@@ -552,6 +571,7 @@ export class SalidasService {
   await tx.movimientoCliente.deleteMany({
     where: {
       salidaId: salida.id,
+      tenantId,
     },
   });
 
@@ -560,6 +580,7 @@ export class SalidasService {
    */
   await tx.movimientoCuenta.deleteMany({
     where: {
+      tenantId,
       referenciaTipo: 'SALIDA',
       referenciaId: salida.id,
     },
@@ -570,6 +591,7 @@ private async aplicarPagoAcreedorEditado(
   tx: Prisma.TransactionClient,
   salidaId: string,
   dto: UpdateSalidaDto,
+  tenantId: string,
 ) {
   const acreedorId = dto.acreedorId;
 
@@ -579,9 +601,10 @@ private async aplicarPagoAcreedorEditado(
     );
   }
 
-  const acreedor = await tx.cliente.findUnique({
+  const acreedor = await tx.cliente.findFirst({
     where: {
       id: acreedorId,
+      tenantId,
     },
   });
 
@@ -594,6 +617,7 @@ private async aplicarPagoAcreedorEditado(
   const cuenta = await this.validarCuentaParaSalida(
     tx,
     dto.cuentaId,
+    tenantId,
   );
 
   /**
@@ -692,6 +716,7 @@ private async aplicarPagoAcreedorEditado(
 
   await tx.movimientoCuenta.create({
     data: {
+      tenantId,
       cuentaId: cuenta.id,
 
       tipo:
@@ -727,6 +752,7 @@ private async aplicarPagoAcreedorEditado(
    */
   await tx.movimientoCliente.create({
     data: {
+      tenantId,
       clienteId: acreedorId,
 
       tipo:
@@ -757,10 +783,12 @@ private async aplicarSalidaSimpleEditada(
   tx: Prisma.TransactionClient,
   salidaId: string,
   dto: UpdateSalidaDto,
+  tenantId: string,
 ) {
   const cuenta = await this.validarCuentaParaSalida(
     tx,
     dto.cuentaId,
+    tenantId,
   );
 
   const calculo =
@@ -857,6 +885,7 @@ private async aplicarSalidaSimpleEditada(
 
   await tx.movimientoCuenta.create({
     data: {
+      tenantId,
       cuentaId: cuenta.id,
 
       tipo:
@@ -888,13 +917,15 @@ private async aplicarSalidaSimpleEditada(
 async editar(
   id: string,
   dto: UpdateSalidaDto,
+  tenantId: string,
 ) {
   this.validarDtoPorTipo(dto);
 
   const salidaActual =
-    await this.prisma.salida.findUnique({
+    await this.prisma.salida.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -922,6 +953,7 @@ async editar(
       await this.reversarSalida(
         tx,
         salidaActual,
+        tenantId,
       );
 
       /**
@@ -935,6 +967,7 @@ async editar(
           tx,
           salidaActual.id,
           dto,
+          tenantId,
         );
       } else if (
         dto.tipo === TipoSalida.GASTO ||
@@ -944,6 +977,7 @@ async editar(
           tx,
           salidaActual.id,
           dto,
+          tenantId,
         );
       } else {
         throw new BadRequestException(
@@ -962,11 +996,12 @@ async editar(
   );
 }
 
-async eliminar(id: string) {
+async eliminar(id: string, tenantId: string) {
   const salida =
-    await this.prisma.salida.findUnique({
+    await this.prisma.salida.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -993,6 +1028,7 @@ async eliminar(id: string) {
       await this.reversarSalida(
         tx,
         salida,
+        tenantId,
       );
 
       /**
@@ -1016,10 +1052,12 @@ async eliminar(id: string) {
   private async validarCuentaParaSalida(
     tx: Prisma.TransactionClient,
     cuentaId: string,
+    tenantId: string,
   ) {
-    const cuenta = await tx.cuenta.findUnique({
+    const cuenta = await tx.cuenta.findFirst({
       where: {
         id: cuentaId,
+        tenantId,
       },
     });
 

@@ -13,6 +13,7 @@ import { SalidasModule } from './salidas/salidas.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { TenantsModule } from './tenants/tenants.module';
 
 import { join } from 'node:path';
 @Module({
@@ -36,6 +37,7 @@ import { join } from 'node:path';
     SalidasModule,
     DashboardModule,
     ConfiguracionModule,
+    TenantsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

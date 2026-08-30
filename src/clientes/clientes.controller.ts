@@ -29,6 +29,11 @@ import { successResponse } from '../common/responses/api-responses';
 import { ClienteLedgerPdfService } from './pdf/cliente-ledger-pdf.service';
 import { FilterClientesCarteraDto } from './dto/filter-clientes-cartera.dto';
 import { AjustarSaldoClienteDto } from './dto/ajustar-saldo-cliente.dto';
+import {
+  TenantContext,
+  requireTenantId,
+} from '../common/tenant/tenant-context.decorator';
+import type { TenantContextValue } from '../common/tenant/tenant-context.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('clientes')
@@ -40,23 +45,36 @@ export class ClientesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Post()
-  async create(@Body() dto: CreateClienteDto) {
-    const data = await this.clientesService.create(dto);
+  async create(
+    @TenantContext() context: TenantContextValue,
+    @Body() dto: CreateClienteDto,
+  ) {
+    const data = await this.clientesService.create(dto, requireTenantId(context));
     return successResponse(data, 'Cliente creado correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
   async findAll(
+    @TenantContext() context: TenantContextValue,
     @Query('nombre') nombre?: string
   ) {
-    const data = await this.clientesService.findAll(nombre,);
+    const data = await this.clientesService.findAll(
+      nombre,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Clientes encontrados correctamente.');
   }
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get('cartera')
-  async getCartera(@Query() filters: FilterClientesCarteraDto) {
-    const data = await this.clientesService.getCartera(filters);
+  async getCartera(
+    @TenantContext() context: TenantContextValue,
+    @Query() filters: FilterClientesCarteraDto,
+  ) {
+    const data = await this.clientesService.getCartera(
+      filters,
+      requireTenantId(context),
+    );
 
     return successResponse(
       data,
@@ -67,10 +85,15 @@ export class ClientesController {
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Patch(':id/estado')
   async updateEstado(
+    @TenantContext() context: TenantContextValue,
     @Param('id') id: string,
     @Body() dto: UpdateEstadoClienteDto,
   ) {
-    const data = await this.clientesService.updateEstado(id, dto);
+    const data = await this.clientesService.updateEstado(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Estado del cliente actualizado correctamente.',
@@ -79,8 +102,14 @@ export class ClientesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/balance')
-  async getBalance(@Param('id') id: string) {
-    const data = await this.clientesService.getBalance(id);
+  async getBalance(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.clientesService.getBalance(
+      id,
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Balance del cliente encontrado correctamente.',
@@ -90,10 +119,15 @@ export class ClientesController {
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/ledger')
   async getLedger(
+    @TenantContext() context: TenantContextValue,
     @Param('id') id: string,
     @Query() filters: FilterClienteLedgerDto,
   ) {
-    const data = await this.clientesService.getLedger(id, filters);
+    const data = await this.clientesService.getLedger(
+      id,
+      filters,
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Libro mayor del cliente encontrado correctamente.',
@@ -102,8 +136,14 @@ export class ClientesController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/perfil')
-  async getPerfil(@Param('id') id: string) {
-    const data = await this.clientesService.getPerfil(id);
+  async getPerfil(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.clientesService.getPerfil(
+      id,
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Perfil del cliente encontrado correctamente.',
@@ -113,11 +153,16 @@ export class ClientesController {
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/ledger/pdf')
   async getLedgerPdf(
+    @TenantContext() context: TenantContextValue,
     @Param('id') id: string,
     @Query() filters: FilterClienteLedgerDto,
     @Res() res: Response,
   ) {
-    const ledger = await this.clientesService.getLedger(id, filters);
+    const ledger = await this.clientesService.getLedger(
+      id,
+      filters,
+      requireTenantId(context),
+    );
     const pdfBuffer = await this.clientesLedgerPdfService.generate(ledger);
 
     res.set({
@@ -129,30 +174,56 @@ export class ClientesController {
     res.end(pdfBuffer);
   }
 
+  @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Patch(':id/ajustar-saldo')
-  async ajustarSaldo(@Param('id') id: string, @Body() dto: AjustarSaldoClienteDto) {
-    const data = await this.clientesService.ajustarSaldo(id, dto);
+  async ajustarSaldo(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+    @Body() dto: AjustarSaldoClienteDto,
+  ) {
+    const data = await this.clientesService.ajustarSaldo(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, "Ajuste realizado satisfactoriamente.")
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateClienteDto) {
-    const data = await this.clientesService.update(id, dto);
+  async update(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+    @Body() dto: UpdateClienteDto,
+  ) {
+    const data = await this.clientesService.update(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Cliente actualizado correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    const data = await this.clientesService.findOne(id);
+  async findOne(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.clientesService.findOne(
+      id,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Cliente encontrado correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN)
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    const data = await this.clientesService.remove(id);
+  async remove(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.clientesService.remove(id, requireTenantId(context));
     return successResponse(data, 'Cliente inactivado correctamente.');
   }
 }

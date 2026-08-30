@@ -28,29 +28,31 @@ import { AjustarSaldoClienteDto } from './dto/ajustar-saldo-cliente.dto';
 export class ClientesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateClienteDto) {
+  async create(dto: CreateClienteDto, tenantId: string) {
     return this.prisma.cliente.create({
       data: {
         nombre: dto.nombre,
         documento: dto.documento,
         telefono: dto.telefono,
         notas: dto.notas,
+        tenantId,
       },
     });
   }
 
-  async findAll(nombre?: string) {
+  async findAll(nombre: string | undefined, tenantId: string) {
     const buscar = nombre?.trim();
 
     return this.prisma.cliente.findMany({
-      where: buscar
-        ? {
-            nombre: {
-              contains: buscar,
-              mode: 'insensitive',
-            },
-          }
-        : undefined,
+      where: {
+        tenantId,
+        ...(buscar && {
+          nombre: {
+            contains: buscar,
+            mode: 'insensitive',
+          },
+        }),
+      },
 
       orderBy: {
         creadoEn: 'desc',
@@ -58,10 +60,11 @@ export class ClientesService {
     });
   }
 
-  async findOne(id: string) {
-    const cliente = await this.prisma.cliente.findUnique({
+  async findOne(id: string, tenantId: string) {
+    const cliente = await this.prisma.cliente.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -72,8 +75,8 @@ export class ClientesService {
     return cliente;
   }
 
-  async update(id: string, dto: UpdateClienteDto) {
-    await this.validarClienteExiste(id);
+  async update(id: string, dto: UpdateClienteDto, tenantId: string) {
+    await this.validarClienteExiste(id, tenantId);
 
     return this.prisma.cliente.update({
       where: {
@@ -88,8 +91,12 @@ export class ClientesService {
     });
   }
 
-  async updateEstado(id: string, dto: UpdateEstadoClienteDto) {
-    await this.validarClienteExiste(id);
+  async updateEstado(
+    id: string,
+    dto: UpdateEstadoClienteDto,
+    tenantId: string,
+  ) {
+    await this.validarClienteExiste(id, tenantId);
 
     return this.prisma.cliente.update({
       where: {
@@ -101,8 +108,8 @@ export class ClientesService {
     });
   }
 
-  async remove(id: string) {
-    await this.validarClienteExiste(id);
+  async remove(id: string, tenantId: string) {
+    await this.validarClienteExiste(id, tenantId);
 
     return this.prisma.cliente.update({
       where: {
@@ -114,12 +121,13 @@ export class ClientesService {
     });
   }
 
-  async getBalance(id: string) {
-    await this.validarClienteExiste(id);
+  async getBalance(id: string, tenantId: string) {
+    await this.validarClienteExiste(id, tenantId);
 
     const movimientos = await this.prisma.movimientoCliente.findMany({
       where: {
         clienteId: id,
+        tenantId,
       },
     });
 
@@ -144,11 +152,16 @@ export class ClientesService {
     };
   }
 
-  async getLedger(id: string, filters: FilterClienteLedgerDto) {
+  async getLedger(
+    id: string,
+    filters: FilterClienteLedgerDto,
+    tenantId: string,
+  ) {
     const [cliente, configuracion] = await Promise.all([
-      this.prisma.cliente.findUnique({
+      this.prisma.cliente.findFirst({
         where: {
           id,
+          tenantId,
         },
         select: {
           id: true,
@@ -158,7 +171,10 @@ export class ClientesService {
           estado: true,
         },
       }),
-      this.prisma.configuracionOrganizacion.findFirst({
+      this.prisma.configuracionOrganizacion.findUnique({
+        where: {
+          tenantId,
+        },
         select: {
           zonaHoraria: true,
         },
@@ -180,6 +196,7 @@ export class ClientesService {
     const andConditions: Prisma.MovimientoClienteWhereInput[] = [
       {
         clienteId: id,
+        tenantId,
       },
     ];
 
@@ -320,6 +337,7 @@ export class ClientesService {
     const movimientosTotales = await this.prisma.movimientoCliente.findMany({
       where: {
         clienteId: id,
+        tenantId,
       },
       select: {
         debitoCop: true,
@@ -442,8 +460,10 @@ export class ClientesService {
     };
   }
 
-  async getCartera(filters: FilterClientesCarteraDto) {
-    const where: Prisma.ClienteWhereInput = {};
+  async getCartera(filters: FilterClientesCarteraDto, tenantId: string) {
+    const where: Prisma.ClienteWhereInput = {
+      tenantId,
+    };
 
     if (filters.buscar) {
       where.OR = [
@@ -549,10 +569,15 @@ export class ClientesService {
     };
   }
 
-  async ajustarSaldo(clienteId: string, dto: AjustarSaldoClienteDto) {
-    const cliente = await this.prisma.cliente.findUnique({
+  async ajustarSaldo(
+    clienteId: string,
+    dto: AjustarSaldoClienteDto,
+    tenantId: string,
+  ) {
+    const cliente = await this.prisma.cliente.findFirst({
       where: {
         id: clienteId,
+        tenantId,
       },
     });
 
@@ -613,6 +638,7 @@ export class ClientesService {
 
       await tx.movimientoCliente.create({
         data: {
+          tenantId,
           clienteId,
           tipo: TipoMovimientoCliente.AJUSTE,
 
@@ -643,10 +669,11 @@ export class ClientesService {
     });
   }
 
-  async getPerfil(id: string) {
-    const cliente = await this.prisma.cliente.findUnique({
+  async getPerfil(id: string, tenantId: string) {
+    const cliente = await this.prisma.cliente.findFirst({
       where: {
         id,
+        tenantId,
       },
       include: {
         movimientos: {
@@ -739,6 +766,7 @@ export class ClientesService {
     const movimientosBalance = await this.prisma.movimientoCliente.findMany({
       where: {
         clienteId: id,
+        tenantId,
       },
       select: {
         debitoCop: true,
@@ -807,10 +835,11 @@ export class ClientesService {
     };
   }
 
-  private async validarClienteExiste(id: string) {
-    const cliente = await this.prisma.cliente.findUnique({
+  private async validarClienteExiste(id: string, tenantId: string) {
+    const cliente = await this.prisma.cliente.findFirst({
       where: {
         id,
+        tenantId,
       },
       select: {
         id: true,

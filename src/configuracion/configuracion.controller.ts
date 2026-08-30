@@ -10,26 +10,21 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-
 import { FileInterceptor } from '@nestjs/platform-express';
-
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync } from 'node:fs';
+import { extname, join } from 'node:path';
 import { diskStorage } from 'multer';
 
-import { existsSync, mkdirSync } from 'node:fs';
-
-import { randomUUID } from 'node:crypto';
-
-import { extname, join } from 'node:path';
-
-import { ConfiguracionService } from './configuracion.service';
-
-import { ActualizarConfiguracionOrganizacionDto } from './dto/actualizar-configuracion-organizacion.dto';
-
-// Ajusta estas rutas según tu proyecto.
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import {
+  TenantContext,
+  requireTenantId,
+} from '../common/tenant/tenant-context.decorator';
+import type { TenantContextValue } from '../common/tenant/tenant-context.decorator';
 import { successResponse } from 'src/common/responses/api-responses';
-// import { RolesGuard } from '../auth/guards/roles.guard';
-// import { Roles } from '../auth/decorators/roles.decorator';
+import { ActualizarConfiguracionOrganizacionDto } from './dto/actualizar-configuracion-organizacion.dto';
+import { ConfiguracionService } from './configuracion.service';
 
 const directorioLogos = join(process.cwd(), 'uploads', 'organizacion');
 
@@ -40,49 +35,36 @@ if (!existsSync(directorioLogos)) {
 }
 
 const extensionesPermitidas = new Set(['.png', '.jpg', '.jpeg', '.webp']);
-
 const mimeTypesPermitidos = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 @Controller('configuracion/organizacion')
 export class ConfiguracionController {
   constructor(private readonly configuracionService: ConfiguracionService) {}
 
-  /**
-   * GET /api/configuracion/organizacion
-   */
-
   @Get('publica')
   async obtenerIdentidadPublica() {
     const data = await this.configuracionService.obtenerIdentidadPublica();
-    return successResponse(data,"Informacion publica.")
+    return successResponse(data, 'Informacion publica.');
   }
 
   @UseGuards(JwtAuthGuard)
   @Get()
-  obtenerOrganizacion() {
-    return this.configuracionService.obtenerOrganizacion();
+  obtenerOrganizacion(@TenantContext() context: TenantContextValue) {
+    return this.configuracionService.obtenerOrganizacion(requireTenantId(context));
   }
 
-  /**
-   * PATCH /api/configuracion/organizacion
-   */
-  // @Roles('ADMIN')
   @UseGuards(JwtAuthGuard)
   @Patch()
   actualizarOrganizacion(
-    @Body()
-    dto: ActualizarConfiguracionOrganizacionDto,
+    @TenantContext() context: TenantContextValue,
+    @Body() dto: ActualizarConfiguracionOrganizacionDto,
   ) {
-    return this.configuracionService.actualizarOrganizacion(dto);
+    return this.configuracionService.actualizarOrganizacion(
+      dto,
+      requireTenantId(context),
+    );
   }
 
-  /**
-   * POST /api/configuracion/organizacion/logo
-   *
-   * Body multipart/form-data:
-   * logo: File
-   */
-  // @Roles('ADMIN')
   @UseGuards(JwtAuthGuard)
   @Post('logo')
   @UseInterceptors(
@@ -91,23 +73,18 @@ export class ConfiguracionController {
         destination: (_request, _file, callback) => {
           callback(null, directorioLogos);
         },
-
         filename: (_request, file, callback) => {
           const extension = extname(file.originalname).toLowerCase();
-
           const nombreArchivo = `logo-${Date.now()}-${randomUUID()}${extension}`;
 
           callback(null, nombreArchivo);
         },
       }),
-
       limits: {
         fileSize: 2 * 1024 * 1024,
       },
-
       fileFilter: (_request, file, callback) => {
         const extension = extname(file.originalname).toLowerCase();
-
         const archivoPermitido =
           mimeTypesPermitidos.has(file.mimetype) &&
           extensionesPermitidas.has(extension);
@@ -128,8 +105,8 @@ export class ConfiguracionController {
     }),
   )
   actualizarLogo(
-    @UploadedFile()
-    archivo?: Express.Multer.File,
+    @TenantContext() context: TenantContextValue,
+    @UploadedFile() archivo?: Express.Multer.File,
   ) {
     if (!archivo) {
       throw new BadRequestException(
@@ -137,16 +114,15 @@ export class ConfiguracionController {
       );
     }
 
-    return this.configuracionService.actualizarLogo(archivo.filename);
+    return this.configuracionService.actualizarLogo(
+      archivo.filename,
+      requireTenantId(context),
+    );
   }
 
-  /**
-   * DELETE /api/configuracion/organizacion/logo
-   */
-  // @Roles('ADMIN')
   @UseGuards(JwtAuthGuard)
   @Delete('logo')
-  eliminarLogo() {
-    return this.configuracionService.eliminarLogo();
+  eliminarLogo(@TenantContext() context: TenantContextValue) {
+    return this.configuracionService.eliminarLogo(requireTenantId(context));
   }
 }

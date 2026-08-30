@@ -21,6 +21,11 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
 import { CancelarEntradaDto } from './dto/cancelar-entrada.dto';
 import { UpdateEntradaDto } from './dto/update-entrada.dto';
+import {
+  requireTenantId,
+  TenantContext,
+  type TenantContextValue,
+} from '../common/tenant/tenant-context.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('entradas')
@@ -29,41 +34,66 @@ export class EntradasController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Post()
-  async create(@Body() dto: CreateEntradaDto) {
-    const data = await this.entradasService.create(dto);
+  async create(
+    @Body() dto: CreateEntradaDto,
+    @TenantContext() context: TenantContextValue,
+  ) {
+    const data = await this.entradasService.create(dto, requireTenantId(context));
     return successResponse(data, 'Entrada registrada correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
-  async findAll() {
-    const data = await this.entradasService.findAll();
+  async findAll(@TenantContext() context: TenantContextValue) {
+    const data = await this.entradasService.findAll(requireTenantId(context));
     return successResponse(data, 'Entradas encontradas correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN)
   @Patch(':id/cancelar')
-  async cancelar(@Param('id') id: string, @Body() dto: CancelarEntradaDto) {
-    const data = await this.entradasService.cancelar(id, dto);
+  async cancelar(
+    @Param('id') id: string,
+    @Body() dto: CancelarEntradaDto,
+    @TenantContext() context: TenantContextValue,
+  ) {
+    const data = await this.entradasService.cancelar(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Entrada cancelada correctamente.');
   }
 
   @Put(':id')
-  async editar(@Param('id') id: string, @Body() dto: UpdateEntradaDto) {
-    const data = await  this.entradasService.editar(id, dto);
+  async editar(
+    @Param('id') id: string,
+    @Body() dto: UpdateEntradaDto,
+    @TenantContext() context: TenantContextValue,
+  ) {
+    const data = await  this.entradasService.editar(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, "Entrada editada con Exito.")
   }
 
   @Delete(':id')
-  async eliminar(@Param('id') id: string) {
-    const data = await this.entradasService.eliminar(id);
+  async eliminar(
+    @Param('id') id: string,
+    @TenantContext() context: TenantContextValue,
+  ) {
+    const data = await this.entradasService.eliminar(id, requireTenantId(context));
     return successResponse(data, "Entrada Eliminada con Exito.")
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    const data = await this.entradasService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @TenantContext() context: TenantContextValue,
+  ) {
+    const data = await this.entradasService.findOne(id, requireTenantId(context));
     return successResponse(data, 'Entrada encontrada correctamente.');
   }
 }

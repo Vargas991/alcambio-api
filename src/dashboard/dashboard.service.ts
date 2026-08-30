@@ -29,9 +29,9 @@ export class DashboardService {
    * Si no se envía fecha se toma la fecha
    * actual de Venezuela.
    */
-  async obtenerResumen(fecha?: string) {
+  async obtenerResumen(fecha: string | undefined, tenantId: string) {
     const zonaHoraria =
-      await this.obtenerZonaHorariaOrganizacion();
+      await this.obtenerZonaHorariaOrganizacion(tenantId);
     const fechaSeleccionada =
       fecha ?? getTodayInTimeZone(zonaHoraria);
 
@@ -51,8 +51,8 @@ export class DashboardService {
       capital,
       caja,
     ] = await Promise.all([
-      this.obtenerCapitalOperativo(),
-      this.obtenerCajaDia(inicio, fin),
+      this.obtenerCapitalOperativo(tenantId),
+      this.obtenerCajaDia(inicio, fin, tenantId),
     ]);
 
     return {
@@ -76,10 +76,11 @@ export class DashboardService {
    * inventario de divisas valorizado
    * al promedio de compra.
    */
-  private async obtenerCapitalOperativo() {
+  private async obtenerCapitalOperativo(tenantId: string) {
   const cuentasBase =
     await this.prisma.cuenta.findMany({
       where: {
+        tenantId,
         categoria:
           CategoriaCuenta.BASE_COP,
         moneda: 'COP',
@@ -107,9 +108,14 @@ export class DashboardService {
     movimientosClientes,
   ] = await Promise.all([
     this.cuentasService
-      .obtenerPromediosCompraCuentasOperativas(),
+      .obtenerPromediosCompraCuentasOperativas(tenantId),
 
     this.prisma.movimientoCliente.findMany({
+      where: {
+        cliente: {
+          tenantId,
+        },
+      },
       select: {
         debitoCop: true,
         creditoCop: true,
@@ -329,10 +335,12 @@ export class DashboardService {
   private async obtenerCajaDia(
     inicio: Date,
     fin: Date,
+    tenantId: string,
   ) {
     const cuentas =
       await this.prisma.cuenta.findMany({
         where: {
+          tenantId,
           categoria:
             CategoriaCuenta.BASE_COP,
 
@@ -364,6 +372,7 @@ export class DashboardService {
       await this.prisma.movimientoCuenta
         .findMany({
           where: {
+            tenantId,
             cuentaId: {
               in: cuentas.map(
                 (cuenta) =>
@@ -805,11 +814,14 @@ export class DashboardService {
     );
   }
 
-  private async obtenerZonaHorariaOrganizacion() {
+  private async obtenerZonaHorariaOrganizacion(tenantId: string) {
     const configuracion =
       await this.prisma
         .configuracionOrganizacion
-        .findFirst({
+        .findUnique({
+          where: {
+            tenantId,
+          },
           select: {
             zonaHoraria: true,
           },

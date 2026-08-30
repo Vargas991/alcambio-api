@@ -22,6 +22,11 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../common/responses/api-responses';
 import { UpdateCuentaDto } from './dto/update-cuenta.dto';
+import {
+  TenantContext,
+  requireTenantId,
+} from '../common/tenant/tenant-context.decorator';
+import type { TenantContextValue } from '../common/tenant/tenant-context.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('cuentas')
@@ -30,45 +35,65 @@ export class CuentasController {
 
   @Roles(RolUsuario.ADMIN)
   @Post()
-  async create(@Body() createCuentaDto: CreateCuentaDto) {
-    const data = await this.cuentasService.create(createCuentaDto);
+  async create(
+    @TenantContext() context: TenantContextValue,
+    @Body() createCuentaDto: CreateCuentaDto,
+  ) {
+    const data = await this.cuentasService.create(
+      createCuentaDto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Cuenta creada correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get()
-  async findAll() {
-    const data = await this.cuentasService.findAll();
+  async findAll(@TenantContext() context: TenantContextValue) {
+    const data = await this.cuentasService.findAll(requireTenantId(context));
     return successResponse(data, 'Cuentas encontradas correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get('base')
-  async findBase() {
-    const data = await this.cuentasService.findBase();
+  async findBase(@TenantContext() context: TenantContextValue) {
+    const data = await this.cuentasService.findBase(requireTenantId(context));
     return successResponse(data, 'Cuentas base encontradas correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get('operativas')
-  async findOperativas() {
-    const data = await this.cuentasService.findOperativas();
+  async findOperativas(@TenantContext() context: TenantContextValue) {
+    const data = await this.cuentasService.findOperativas(
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Cuentas operativas encontradas correctamente.',
     );
   }
 
+  @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get('promedios-compra')
- async  obtenerPromediosCompraCuentasOperativas() {
-    const data = await this.cuentasService.obtenerPromediosCompraCuentasOperativas();
+  async obtenerPromediosCompraCuentasOperativas(
+    @TenantContext() context: TenantContextValue,
+  ) {
+    const data =
+      await this.cuentasService.obtenerPromediosCompraCuentasOperativas(
+        requireTenantId(context),
+      );
     return successResponse(data, "Promedios obtenidos con exito.")
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/movimientos')
-  async getMovimientos(@Param('id') id: string) {
-    const data = await this.cuentasService.getMovimientos(id);
+  async getMovimientos(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.cuentasService.getMovimientos(
+      id,
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Movimientos de cuenta encontrados correctamente.',
@@ -77,18 +102,26 @@ export class CuentasController {
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    const data = await this.cuentasService.findOne(id);
+  async findOne(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.cuentasService.findOne(id, requireTenantId(context));
     return successResponse(data, 'Cuenta encontrada correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN)
   @Patch(':id/estado')
   async updateEstado(
+    @TenantContext() context: TenantContextValue,
     @Param('id') id: string,
     @Body() dto: UpdateEstadoCuentaDto,
   ) {
-    const data = await this.cuentasService.updateEstado(id, dto);
+    const data = await this.cuentasService.updateEstado(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(
       data,
       'Estado de la cuenta actualizado correctamente.',
@@ -98,40 +131,71 @@ export class CuentasController {
   @Roles(RolUsuario.ADMIN)
   @Patch(':id/ajustar-saldo')
   async ajustarSaldo(
+    @TenantContext() context: TenantContextValue,
     @Param('id') id: string,
     @Body() dto: AjustarSaldoCuentaDto,
   ) {
-    const data = await this.cuentasService.ajustarSaldo(id, dto);
+    const data = await this.cuentasService.ajustarSaldo(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Saldo de la cuenta ajustado correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Post(':id/gasto')
   async registrarGasto(
+    @TenantContext() context: TenantContextValue,
     @Param('id') id: string,
     @Body() dto: CreateGastoCuentaDto,
   ) {
-    const data = await this.cuentasService.registrarGasto(id, dto);
+    const data = await this.cuentasService.registrarGasto(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Gasto registrado correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   @Post('traslado')
-  async trasladar(@Body() dto: CreateTrasladoCuentaDto) {
-    const data = await this.cuentasService.trasladar(dto);
+  async trasladar(
+    @TenantContext() context: TenantContextValue,
+    @Body() dto: CreateTrasladoCuentaDto,
+  ) {
+    const data = await this.cuentasService.trasladar(
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Traslado realizado correctamente.');
   }
 
   @Roles(RolUsuario.ADMIN)
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateCuentaDto) {
-    const data = await this.cuentasService.update(id, dto);
+  async update(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+    @Body() dto: UpdateCuentaDto,
+  ) {
+    const data = await this.cuentasService.update(
+      id,
+      dto,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Cuenta actualizada correctamente.');
   }
 
+  @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.VISOR)
   @Get(':id/promedio-compra')
-  async obtenerPromedioCompraCuenta(@Param('id') id: string) {
-    const data = await this.cuentasService.obtenerPromedioCompraCuenta(id);
+  async obtenerPromedioCompraCuenta(
+    @TenantContext() context: TenantContextValue,
+    @Param('id') id: string,
+  ) {
+    const data = await this.cuentasService.obtenerPromedioCompraCuenta(
+      id,
+      requireTenantId(context),
+    );
     return successResponse(data, 'Promedio de Cuenta Operativa');
   }
 

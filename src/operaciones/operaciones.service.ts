@@ -26,7 +26,7 @@ import { getUtcDayRange } from '../common/helpers/date-range.helper';
 export class OperacionesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateOperacionDto) {
+  async create(dto: CreateOperacionDto, tenantId: string) {
     this.validarDtoPorTipo(dto);
 
     const totalCompraCop = this.calcularTotalCompra(dto);
@@ -39,7 +39,7 @@ export class OperacionesService {
       let operacionId: string;
 
       if (dto.tipo === TipoOperacion.VENTA) {
-        const operacion = await this.crearVenta(tx, dto, {
+        const operacion = await this.crearVenta(tx, dto, tenantId, {
           codigo,
           totalCompraCop,
           totalVentaCop,
@@ -48,7 +48,7 @@ export class OperacionesService {
 
         operacionId = operacion.id;
       } else if (dto.tipo === TipoOperacion.COMPRA) {
-        const operacion = await this.crearCompra(tx, dto, {
+        const operacion = await this.crearCompra(tx, dto, tenantId, {
           codigo,
           totalCompraCop,
           totalVentaCop,
@@ -57,7 +57,7 @@ export class OperacionesService {
 
         operacionId = operacion.id;
       } else {
-        const operacion = await this.crearOperacionDirecta(tx, dto, {
+        const operacion = await this.crearOperacionDirecta(tx, dto, tenantId, {
           codigo,
           totalCompraCop,
           totalVentaCop,
@@ -76,11 +76,13 @@ export class OperacionesService {
     });
   }
 
-  async findAll(filters: FilterOperacionesDto) {
-    const where: Prisma.OperacionWhereInput = {};
+  async findAll(filters: FilterOperacionesDto, tenantId: string) {
+    const where: Prisma.OperacionWhereInput = {
+      tenantId,
+    };
     const andConditions: Prisma.OperacionWhereInput[] = [];
     const zonaHoraria =
-      await this.obtenerZonaHorariaOrganizacion();
+      await this.obtenerZonaHorariaOrganizacion(tenantId);
 
     if (filters.tipo) {
       where.tipo = filters.tipo;
@@ -189,10 +191,11 @@ export class OperacionesService {
     });
   }
 
-  async findOne(id: string) {
-    const operacion = await this.prisma.operacion.findUnique({
+  async findOne(id: string, tenantId: string) {
+    const operacion = await this.prisma.operacion.findFirst({
       where: {
         id,
+        tenantId,
       },
       include: this.operacionInclude(),
     });
@@ -204,10 +207,11 @@ export class OperacionesService {
     return operacion;
   }
 
-  async cancelar(id: string, dto: CancelarOperacionDto) {
-  const operacion = await this.prisma.operacion.findUnique({
+  async cancelar(id: string, dto: CancelarOperacionDto, tenantId: string) {
+  const operacion = await this.prisma.operacion.findFirst({
     where: {
       id,
+      tenantId,
     },
     include: {
       cuentaOperativa: true,
@@ -278,6 +282,7 @@ export class OperacionesService {
     await tx.movimientoCliente.deleteMany({
       where: {
         operacionId: operacion.id,
+        tenantId,
       },
     });
 
@@ -293,6 +298,7 @@ export class OperacionesService {
      */
     await tx.movimientoCuenta.deleteMany({
       where: {
+        tenantId,
         referenciaTipo: 'OPERACION',
         referenciaId: operacion.id,
       },
@@ -318,6 +324,7 @@ export class OperacionesService {
   private async crearVenta(
     tx: Prisma.TransactionClient,
     dto: CreateOperacionDto,
+    tenantId: string,
     calculos: {
       codigo: string;
       totalCompraCop: number;
@@ -336,9 +343,10 @@ export class OperacionesService {
       throw new BadRequestException('La venta requiere cuentaOperativaId.');
     }
 
-    const deudor = await tx.cliente.findUnique({
+    const deudor = await tx.cliente.findFirst({
       where: {
         id: deudorId,
+        tenantId,
       },
     });
 
@@ -346,9 +354,10 @@ export class OperacionesService {
       throw new NotFoundException('El deudor no existe.');
     }
 
-    const cuenta = await tx.cuenta.findUnique({
+    const cuenta = await tx.cuenta.findFirst({
       where: {
         id: cuentaOperativaId,
+        tenantId,
       },
     });
 
@@ -371,6 +380,7 @@ export class OperacionesService {
 
     const operacion = await tx.operacion.create({
       data: {
+        tenantId,
         codigo: calculos.codigo,
         nombre: dto.nombre,
         tipo: TipoOperacion.VENTA,
@@ -407,6 +417,7 @@ export class OperacionesService {
 
     await tx.movimientoCuenta.create({
       data: {
+        tenantId,
         cuentaId: cuenta.id,
         tipo: TipoMovimientoCuenta.OPERACION_SALIDA,
         monto: dto.montoTransaccion,
@@ -421,6 +432,7 @@ export class OperacionesService {
 
     await tx.movimientoCliente.create({
       data: {
+        tenantId,
         clienteId: deudorId,
         tipo: TipoMovimientoCliente.OPERACION,
         operacionId: operacion.id,
@@ -438,6 +450,7 @@ export class OperacionesService {
   private async crearCompra(
     tx: Prisma.TransactionClient,
     dto: CreateOperacionDto,
+    tenantId: string,
     calculos: {
       codigo: string;
       totalCompraCop: number;
@@ -456,9 +469,10 @@ export class OperacionesService {
       throw new BadRequestException('La compra requiere cuentaOperativaId.');
     }
 
-    const acreedor = await tx.cliente.findUnique({
+    const acreedor = await tx.cliente.findFirst({
       where: {
         id: acreedorId,
+        tenantId,
       },
     });
 
@@ -466,9 +480,10 @@ export class OperacionesService {
       throw new NotFoundException('El acreedor no existe.');
     }
 
-    const cuenta = await tx.cuenta.findUnique({
+    const cuenta = await tx.cuenta.findFirst({
       where: {
         id: cuentaOperativaId,
+        tenantId,
       },
     });
 
@@ -484,6 +499,7 @@ export class OperacionesService {
 
     const operacion = await tx.operacion.create({
       data: {
+        tenantId,
         codigo: calculos.codigo,
         nombre: dto.nombre,
         tipo: TipoOperacion.COMPRA,
@@ -520,6 +536,7 @@ export class OperacionesService {
 
     await tx.movimientoCuenta.create({
       data: {
+        tenantId,
         cuentaId: cuenta.id,
         tipo: TipoMovimientoCuenta.OPERACION_ENTRADA,
         monto: dto.montoTransaccion,
@@ -534,6 +551,7 @@ export class OperacionesService {
 
     await tx.movimientoCliente.create({
       data: {
+        tenantId,
         clienteId: acreedorId,
         tipo: TipoMovimientoCliente.OPERACION,
         operacionId: operacion.id,
@@ -551,6 +569,7 @@ export class OperacionesService {
   private async crearOperacionDirecta(
     tx: Prisma.TransactionClient,
     dto: CreateOperacionDto,
+    tenantId: string,
     calculos: {
       codigo: string;
       totalCompraCop: number;
@@ -577,9 +596,10 @@ export class OperacionesService {
       );
     }
 
-    const deudor = await tx.cliente.findUnique({
+    const deudor = await tx.cliente.findFirst({
       where: {
         id: deudorId,
+        tenantId,
       },
     });
 
@@ -587,9 +607,10 @@ export class OperacionesService {
       throw new NotFoundException('El deudor no existe.');
     }
 
-    const acreedor = await tx.cliente.findUnique({
+    const acreedor = await tx.cliente.findFirst({
       where: {
         id: acreedorId,
+        tenantId,
       },
     });
 
@@ -599,6 +620,7 @@ export class OperacionesService {
 
     const operacion = await tx.operacion.create({
       data: {
+        tenantId,
         codigo: calculos.codigo,
         nombre: dto.nombre,
         tipo: TipoOperacion.OPERACION_DIRECTA,
@@ -626,6 +648,7 @@ export class OperacionesService {
 
     await tx.movimientoCliente.create({
       data: {
+        tenantId,
         clienteId: deudorId,
         tipo: TipoMovimientoCliente.OPERACION,
         operacionId: operacion.id,
@@ -639,6 +662,7 @@ export class OperacionesService {
 
     await tx.movimientoCliente.create({
       data: {
+        tenantId,
         clienteId: acreedorId,
         tipo: TipoMovimientoCliente.OPERACION,
         operacionId: operacion.id,
@@ -660,10 +684,12 @@ export class OperacionesService {
     operacionId: string,
     codigoOperacion: string,
     motivo: string,
+    tenantId: string,
   ) {
-    const cuenta = await tx.cuenta.findUnique({
+    const cuenta = await tx.cuenta.findFirst({
       where: {
         id: cuentaId,
+        tenantId,
       },
     });
 
@@ -685,6 +711,7 @@ export class OperacionesService {
 
     await tx.movimientoCuenta.create({
       data: {
+        tenantId,
         cuentaId: cuenta.id,
         tipo: TipoMovimientoCuenta.AJUSTE_ENTRADA,
         monto,
@@ -705,10 +732,12 @@ export class OperacionesService {
     operacionId: string,
     codigoOperacion: string,
     motivo: string,
+    tenantId: string,
   ) {
-    const cuenta = await tx.cuenta.findUnique({
+    const cuenta = await tx.cuenta.findFirst({
       where: {
         id: cuentaId,
+        tenantId,
       },
     });
 
@@ -737,6 +766,7 @@ export class OperacionesService {
 
     await tx.movimientoCuenta.create({
       data: {
+        tenantId,
         cuentaId: cuenta.id,
         tipo: TipoMovimientoCuenta.AJUSTE_SALIDA,
         monto,
@@ -884,11 +914,14 @@ export class OperacionesService {
   return `OP-${String(siguiente).padStart(6, '0')}`;
 }
 
-  private async obtenerZonaHorariaOrganizacion() {
+  private async obtenerZonaHorariaOrganizacion(tenantId: string) {
     const configuracion =
       await this.prisma
         .configuracionOrganizacion
-        .findFirst({
+        .findUnique({
+          where: {
+            tenantId,
+          },
           select: {
             zonaHoraria: true,
           },
@@ -948,6 +981,7 @@ export class OperacionesService {
     cuentaOperativaId: string | null;
     montoTransaccion: Prisma.Decimal;
   },
+  tenantId: string,
 ) {
   if (
     operacion.tipo === TipoOperacion.VENTA &&
@@ -969,9 +1003,10 @@ export class OperacionesService {
     operacion.tipo === TipoOperacion.COMPRA &&
     operacion.cuentaOperativaId
   ) {
-    const cuenta = await tx.cuenta.findUnique({
+    const cuenta = await tx.cuenta.findFirst({
       where: {
         id: operacion.cuentaOperativaId,
+        tenantId,
       },
     });
 
@@ -1002,6 +1037,7 @@ private async aplicarVentaEditada(
   tx: Prisma.TransactionClient,
   operacionId: string,
   dto: UpdateOperacionDto,
+  tenantId: string,
   calculos: {
     codigo: string;
     totalCompraCop: number;
@@ -1016,9 +1052,10 @@ private async aplicarVentaEditada(
     throw new BadRequestException('La venta requiere cuentaOperativaId.');
   }
 
-  const deudor = await tx.cliente.findUnique({
+  const deudor = await tx.cliente.findFirst({
     where: {
       id: dto.deudorId,
+      tenantId,
     },
   });
 
@@ -1026,9 +1063,10 @@ private async aplicarVentaEditada(
     throw new NotFoundException('El deudor no existe.');
   }
 
-  const cuenta = await tx.cuenta.findUnique({
+  const cuenta = await tx.cuenta.findFirst({
     where: {
       id: dto.cuentaOperativaId,
+      tenantId,
     },
   });
 
@@ -1060,6 +1098,7 @@ private async aplicarVentaEditada(
 
   await tx.movimientoCuenta.create({
     data: {
+      tenantId,
       cuentaId: cuenta.id,
       tipo: TipoMovimientoCuenta.OPERACION_SALIDA,
       monto: dto.montoTransaccion,
@@ -1074,6 +1113,7 @@ private async aplicarVentaEditada(
 
   await tx.movimientoCliente.create({
     data: {
+      tenantId,
       clienteId: dto.deudorId,
       tipo: TipoMovimientoCliente.OPERACION,
       operacionId,
@@ -1090,6 +1130,7 @@ private async aplicarCompraEditada(
   tx: Prisma.TransactionClient,
   operacionId: string,
   dto: UpdateOperacionDto,
+  tenantId: string,
   calculos: {
     codigo: string;
     totalCompraCop: number;
@@ -1103,9 +1144,10 @@ private async aplicarCompraEditada(
     throw new BadRequestException('La compra requiere cuentaOperativaId.');
   }
 
-  const acreedor = await tx.cliente.findUnique({
+  const acreedor = await tx.cliente.findFirst({
     where: {
       id: dto.acreedorId,
+      tenantId,
     },
   });
 
@@ -1113,9 +1155,10 @@ private async aplicarCompraEditada(
     throw new NotFoundException('El acreedor no existe.');
   }
 
-  const cuenta = await tx.cuenta.findUnique({
+  const cuenta = await tx.cuenta.findFirst({
     where: {
       id: dto.cuentaOperativaId,
+      tenantId,
     },
   });
 
@@ -1140,6 +1183,7 @@ private async aplicarCompraEditada(
 
   await tx.movimientoCuenta.create({
     data: {
+      tenantId,
       cuentaId: cuenta.id,
       tipo: TipoMovimientoCuenta.OPERACION_ENTRADA,
       monto: dto.montoTransaccion,
@@ -1154,6 +1198,7 @@ private async aplicarCompraEditada(
 
   await tx.movimientoCliente.create({
     data: {
+      tenantId,
       clienteId: dto.acreedorId,
       tipo: TipoMovimientoCliente.OPERACION,
       operacionId,
@@ -1170,6 +1215,7 @@ private async aplicarOperacionDirectaEditada(
   tx: Prisma.TransactionClient,
   operacionId: string,
   dto: UpdateOperacionDto,
+  tenantId: string,
   calculos: {
     codigo: string;
     totalCompraCop: number;
@@ -1194,9 +1240,10 @@ private async aplicarOperacionDirectaEditada(
     );
   }
 
-  const deudor = await tx.cliente.findUnique({
+  const deudor = await tx.cliente.findFirst({
     where: {
       id: dto.deudorId,
+      tenantId,
     },
   });
 
@@ -1204,9 +1251,10 @@ private async aplicarOperacionDirectaEditada(
     throw new NotFoundException('El deudor no existe.');
   }
 
-  const acreedor = await tx.cliente.findUnique({
+  const acreedor = await tx.cliente.findFirst({
     where: {
       id: dto.acreedorId,
+      tenantId,
     },
   });
 
@@ -1216,6 +1264,7 @@ private async aplicarOperacionDirectaEditada(
 
   await tx.movimientoCliente.create({
     data: {
+      tenantId,
       clienteId: dto.deudorId,
       tipo: TipoMovimientoCliente.OPERACION,
       operacionId,
@@ -1229,6 +1278,7 @@ private async aplicarOperacionDirectaEditada(
 
   await tx.movimientoCliente.create({
     data: {
+      tenantId,
       clienteId: dto.acreedorId,
       tipo: TipoMovimientoCliente.OPERACION,
       operacionId,
@@ -1241,12 +1291,13 @@ private async aplicarOperacionDirectaEditada(
   });
 }
 
-  async editar(id: string, dto: UpdateOperacionDto) {
+  async editar(id: string, dto: UpdateOperacionDto, tenantId: string) {
   this.validarDtoPorTipo(dto);
 
-  const operacionActual = await this.prisma.operacion.findUnique({
+  const operacionActual = await this.prisma.operacion.findFirst({
     where: {
       id,
+      tenantId,
     },
     include: {
       cuentaOperativa: true,
@@ -1266,7 +1317,7 @@ private async aplicarOperacionDirectaEditada(
     /**
      * 1. Reversar impacto anterior en cuenta operativa.
      */
-    await this.reversarImpactoOperacionExistente(tx, operacionActual);
+    await this.reversarImpactoOperacionExistente(tx, operacionActual, tenantId);
 
     /**
      * 2. Eliminar movimientos anteriores.
@@ -1274,11 +1325,13 @@ private async aplicarOperacionDirectaEditada(
     await tx.movimientoCliente.deleteMany({
       where: {
         operacionId: operacionActual.id,
+        tenantId,
       },
     });
 
     await tx.movimientoCuenta.deleteMany({
       where: {
+        tenantId,
         referenciaTipo: 'OPERACION',
         referenciaId: operacionActual.id,
       },
@@ -1332,7 +1385,7 @@ private async aplicarOperacionDirectaEditada(
      * 4. Aplicar nuevo impacto según el nuevo tipo.
      */
     if (dto.tipo === TipoOperacion.VENTA) {
-      await this.aplicarVentaEditada(tx, operacionEditada.id, dto, {
+      await this.aplicarVentaEditada(tx, operacionEditada.id, dto, tenantId, {
         codigo: operacionActual.codigo,
         totalCompraCop,
         totalVentaCop,
@@ -1340,14 +1393,14 @@ private async aplicarOperacionDirectaEditada(
     }
 
     if (dto.tipo === TipoOperacion.COMPRA) {
-      await this.aplicarCompraEditada(tx, operacionEditada.id, dto, {
+      await this.aplicarCompraEditada(tx, operacionEditada.id, dto, tenantId, {
         codigo: operacionActual.codigo,
         totalCompraCop,
       });
     }
 
     if (dto.tipo === TipoOperacion.OPERACION_DIRECTA) {
-      await this.aplicarOperacionDirectaEditada(tx, operacionEditada.id, dto, {
+      await this.aplicarOperacionDirectaEditada(tx, operacionEditada.id, dto, tenantId, {
         codigo: operacionActual.codigo,
         totalCompraCop,
         totalVentaCop,
