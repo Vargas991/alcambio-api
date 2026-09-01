@@ -134,6 +134,7 @@ describe('Tenant financial core', () => {
         },
         operacion: {
           findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
         },
       };
 
@@ -156,6 +157,43 @@ describe('Tenant financial core', () => {
           }),
         }),
       );
+    });
+
+    it('devuelve operaciones paginadas con meta y aplica page/pageSize', async () => {
+      const prisma = {
+        configuracionOrganizacion: {
+          findUnique: jest.fn().mockResolvedValue({
+            zonaHoraria: 'America/Bogota',
+          }),
+        },
+        operacion: {
+          findMany: jest.fn().mockResolvedValue([{ id: 'op-2' }]),
+          count: jest.fn().mockResolvedValue(43),
+        },
+      };
+
+      const service = new OperacionesService(prisma as never);
+
+      const result = await service.findAll({ page: 2, pageSize: 10 }, TENANT_ID);
+
+      expect(prisma.operacion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tenantId: TENANT_ID,
+          }),
+          skip: 10,
+          take: 10,
+        }),
+      );
+      expect(result).toEqual({
+        items: [{ id: 'op-2' }],
+        meta: {
+          page: 2,
+          pageSize: 10,
+          total: 43,
+          totalPages: 5,
+        },
+      });
     });
 
     it('crea venta con tenantId y valida cliente/cuenta dentro del tenant', async () => {

@@ -182,13 +182,34 @@ export class OperacionesService {
       where.AND = andConditions;
     }
 
-    return this.prisma.operacion.findMany({
-      where,
-      orderBy: {
-        fechaOperacion: 'desc',
+    const page = Math.max(1, Number(filters.page ?? 1));
+    const pageSize = Math.min(100, Math.max(1, Number(filters.pageSize ?? 20)));
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      this.prisma.operacion.findMany({
+        where,
+        orderBy: {
+          fechaOperacion: 'desc',
+        },
+        include: this.operacionInclude(),
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.operacion.count({ where }),
+    ]);
+
+    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+
+    return {
+      items,
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages,
       },
-      include: this.operacionInclude(),
-    });
+    };
   }
 
   async findOne(id: string, tenantId: string) {
